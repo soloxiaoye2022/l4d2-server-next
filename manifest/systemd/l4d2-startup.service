@@ -1,0 +1,6 @@
+[Unit]
+Description=Apply L4D2 Manager startup unit changes
+
+[Service]
+Type=oneshot
+ExecStart=/opt/l4d2-manager/apply-startup.sh

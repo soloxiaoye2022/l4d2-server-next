@@ -10,6 +10,8 @@
 | `L4D2_MANAGER_PORT` | 管理器监听端口。 | `27020` |
 | `L4D2_GAME_PATH` | L4D2 的 `left4dead2` 游戏目录。 | `/left4dead2` |
 | `L4D2_RCON_URL` | RCON 地址，格式为 `IP:端口` 或 `容器名:端口`。 | 空 |
+| `L4D2_RCON_PORT` | 手动覆盖 RCON 端口。未设置时自动读取服务单元启动项中的 `+hostport`、`+port` 或 `-port`。 | 空 |
+| `L4D2_SERVER_UNIT_FILE` | 用于自动读取游戏端口的管理器内服务单元快照路径。 | `/control/l4d2.service` |
 | `L4D2_RCON_PASSWORD` | RCON 密码，需要和 `server.cfg` 一致。 | 空 |
 | `L4D2_RESTART_BY_RCON` | 重启服务器时是否优先使用 RCON。推荐设为 `true`。 | `false` |
 | `L4D2_RESTART_CMD` | 不使用 RCON 重启时执行的自定义命令。 | 空 |
@@ -25,6 +27,9 @@
 | `L4D2_VAC` | 是否启用 VAC。`false` 会添加 `-insecure`。 | `false` |
 | `L4D2_PORT` | 游戏服监听端口。 | `27015` |
 | `L4D2_RCON_PASSWORD` | 写入游戏服 `server.cfg` 的 RCON 密码。 | `laoyutangnb!` |
+| `L4D2_STARTUP_UNIT_PATH` | 启动项快照路径；控制首页端口和 RCON 端口解析。 | `/control/l4d2.service` |
+| `L4D2_SERVER_UNIT_FILE` | `L4D2_STARTUP_UNIT_PATH` 的旧部署兼容别名。 | 空 |
+| `L4D2_RCON_PORT` | 显式覆盖自动解析出的 RCON 端口。 | 空 |
 
 ## 数据目录
 

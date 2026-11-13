@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for L4D2 Manager startup unit changes
+
+[Path]
+PathChanged=/opt/l4d2-manager/control/l4d2.service
+Unit=l4d2-startup.service
+
+[Install]
+WantedBy=paths.target

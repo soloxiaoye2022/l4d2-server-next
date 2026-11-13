@@ -41,6 +41,7 @@ steam_api_key=${steam_api_key:-""}
 # 生成随机RCON密码
 L4D2_RCON_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
 
+docker_gid=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
 mkdir -p /data/l4d2
 # 写入docker-compose文件
 cat > /data/l4d2/docker-compose.yaml << EOF
@@ -82,6 +83,8 @@ services:
     image: laoyutang/l4d2-manager-next:latest
     container_name: l4d2-manager
     restart: unless-stopped
+    group_add:
+      - "$docker_gid"
     ports:
       - "$manager_port:27020"
     volumes:

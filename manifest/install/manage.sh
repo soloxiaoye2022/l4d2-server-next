@@ -369,6 +369,8 @@ generate_compose() {
             printf '%s\n' "    image: ${manager_image}"
             printf '%s\n' "    container_name: ${name}-manager"
             printf '%s\n' "    restart: unless-stopped"
+            printf '%s\n' "    group_add:"
+            printf '%s\n' "      - \"$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)\""
             printf '%s\n' "    ports:"
             printf '%s\n' "      - \"${MANAGER_PORT}:27020\""
             printf '%s\n' "    volumes:"

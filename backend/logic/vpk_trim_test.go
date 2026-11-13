@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"errors"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -99,6 +100,35 @@ func TestTrimRawSingleFileVPKDeletesSafeServerFiles(t *testing.T) {
 		if !names[name] {
 			t.Fatalf("trimmed archive missing %s", name)
 		}
+	}
+}
+
+func TestTrimRawSingleFileVPKRejectsEmptyResult(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "source.vpk")
+	trimmedPath := filepath.Join(dir, "trimmed.vpk")
+
+	writeVPKTrimTestVPK(t, sourcePath, map[string]string{
+		"materials/test/demo.vtf": "client only texture",
+		"sound/test/theme.wav":    "client only sound",
+	})
+
+	if _, _, err := trimRawSingleFileVPK(sourcePath, trimmedPath); !errors.Is(err, errRawVPKTrimEmpty) {
+		t.Fatalf("trimRawSingleFileVPK() error = %v, want errRawVPKTrimEmpty", err)
+	}
+	if _, err := os.Stat(trimmedPath); !os.IsNotExist(err) {
+		t.Fatalf("trimmed file should not be created, stat error = %v", err)
+	}
+}
+
+func TestValidateTrimmedVPKRejectsHeaderOnlyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.vpk")
+	header := []byte{0x34, 0x12, 0xaa, 0x55, 1, 0, 0, 0, 0, 0, 0, 0}
+	if err := os.WriteFile(path, header, 0644); err != nil {
+		t.Fatalf("write header-only vpk: %v", err)
+	}
+	if err := validateTrimmedVPK(path); err == nil {
+		t.Fatal("validateTrimmedVPK() = nil, want error for header-only vpk")
 	}
 }
 

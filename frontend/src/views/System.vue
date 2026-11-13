@@ -11,6 +11,7 @@
     LineChartOutlined,
     DatabaseOutlined,
     CloudUploadOutlined,
+    KeyOutlined,
     ReloadOutlined,
   } from '@ant-design/icons-vue';
   import { api } from '../services/api';
@@ -18,6 +19,7 @@
   import { useMonitorStore } from '../stores/monitor';
   import MapHotReloadSetting from '../components/settings/MapHotReloadSetting.vue';
   import SteamCDNSetting from '../components/settings/SteamCDNSetting.vue';
+  import SteamAPIKeySetting from '../components/settings/SteamAPIKeySetting.vue';
   import DiskUsageLimitSetting from '../components/settings/DiskUsageLimitSetting.vue';
   import MapImportPolicySetting from '../components/settings/MapImportPolicySetting.vue';
 
@@ -180,6 +182,11 @@
     }, 700);
   };
 
+  const scrollToSteamAPI = () => {
+    activeSection.value = 'statistics';
+    document.getElementById('steam-api-setting')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const updateActiveSection = () => {
     if (pendingSection) {
       activeSection.value = pendingSection;
@@ -306,6 +313,15 @@
             v-if="isAdmin"
             type="button"
             class="settings-nav-item"
+            @click="scrollToSteamAPI"
+          >
+            <KeyOutlined />
+            <span>Steam API 设置</span>
+          </button>
+          <button
+            v-if="isAdmin"
+            type="button"
+            class="settings-nav-item"
             :class="{ active: activeSection === 'statistics' }"
             :aria-current="activeSection === 'statistics' ? 'location' : undefined"
             @click="scrollToSection('statistics')"
@@ -393,6 +409,7 @@
                 </div>
               </section>
             </div>
+            <SteamAPIKeySetting />
           </section>
 
           <section

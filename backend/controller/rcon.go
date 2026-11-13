@@ -5,7 +5,6 @@ import (
 	"l4d2-manager-next/logic"
 	"l4d2-manager-next/pkg/rcon"
 	"net/http"
-	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -81,10 +80,10 @@ func KickUser(c *gin.Context) {
 	defer LogOp(c, fmt.Sprintf("踢出用户: %s (%s)", userName, userId))()
 
 	var kickTarget string
-	if userName != "" {
-		kickTarget = `"` + userName + `"` // 用户名需要用引号包围
-	} else if userId != "" {
+	if userId != "" {
 		kickTarget = userId
+	} else if userName != "" {
+		kickTarget = `"` + userName + `"` // 用户名需要用引号包围
 	} else {
 		FailWithError(c, http.StatusBadRequest, "用户名或用户ID不能为空")
 		return
@@ -313,18 +312,5 @@ func Rcon(c *gin.Context) {
 }
 
 func getRconConnection() (*rcon.Conn, error) {
-	url := os.Getenv("L4D2_RCON_URL")
-	if url == "" {
-		return nil, fmt.Errorf("服务端未配置RCON链接")
-	}
-	pwd := os.Getenv("L4D2_RCON_PASSWORD")
-	if pwd == "" {
-		return nil, fmt.Errorf("服务端未配置RCON密码")
-	}
-
-	conn, err := rcon.Dial(url, pwd)
-	if err != nil {
-		return nil, fmt.Errorf("RCON连接失败: %v", err)
-	}
-	return conn, nil
+	return logic.DialRconConnection()
 }

@@ -25,10 +25,17 @@ const (
 	rawVPKTerminator  = 0xffff
 )
 
-var errRawVPKTrimUnsupported = errors.New("unsupported vpk layout")
+var (
+	errRawVPKTrimUnsupported = errors.New("unsupported vpk layout")
+	errRawVPKTrimEmpty       = errors.New("trimmed vpk would contain no entries")
+)
 
 func IsVPKTrimUnsupported(err error) bool {
 	return errors.Is(err, errRawVPKTrimUnsupported)
+}
+
+func IsVPKTrimEmpty(err error) bool {
+	return errors.Is(err, errRawVPKTrimEmpty)
 }
 
 func CleanVPKTrimTemp() {
@@ -52,6 +59,9 @@ func TrimVPKForServer(sourcePath string) (string, func(), error) {
 	trimmedPath := filepath.Join(tempDir, "trimmed.vpk")
 	if _, _, err := trimRawSingleFileVPK(sourcePath, trimmedPath); err != nil {
 		cleanup()
+		if errors.Is(err, errRawVPKTrimEmpty) {
+			return "", nil, fmt.Errorf("精简结果不包含任何服务端文件，已阻止安装空 VPK: %w", err)
+		}
 		if errors.Is(err, errRawVPKTrimUnsupported) {
 			return "", nil, fmt.Errorf("当前仅支持VPK v1单文件地图精简: %w", err)
 		}
@@ -67,10 +77,45 @@ func TrimVPKForServer(sourcePath string) (string, func(), error) {
 }
 
 func validateTrimmedVPK(trimmedPath string) error {
-	if info, err := os.Stat(trimmedPath); err != nil {
+	info, err := os.Stat(trimmedPath)
+	if err != nil {
 		return fmt.Errorf("读取精简VPK失败: %w", err)
-	} else if info.Size() == 0 {
+	}
+	headerSize := int64(binary.Size(rawVPKHeader{}))
+	if info.Size() <= headerSize {
 		return fmt.Errorf("精简VPK为空")
+	}
+
+	in, err := os.Open(trimmedPath)
+	if err != nil {
+		return fmt.Errorf("读取精简VPK失败: %w", err)
+	}
+	defer in.Close()
+
+	var header rawVPKHeader
+	if err := binary.Read(in, binary.LittleEndian, &header); err != nil {
+		return fmt.Errorf("读取精简VPK头失败: %w", err)
+	}
+	if header.Magic != rawVPKMagic || header.Version != rawVPKVersion1 {
+		return fmt.Errorf("精简VPK头部无效")
+	}
+	if header.TreeSize == 0 {
+		return fmt.Errorf("精简VPK目录树为空")
+	}
+	if info.Size() < headerSize+int64(header.TreeSize) {
+		return fmt.Errorf("精简VPK数据不完整")
+	}
+
+	tree := make([]byte, header.TreeSize)
+	if _, err := io.ReadFull(in, tree); err != nil {
+		return fmt.Errorf("读取精简VPK目录树失败: %w", err)
+	}
+	entries, err := parseRawVPKTree(tree)
+	if err != nil {
+		return fmt.Errorf("精简VPK目录树损坏: %w", err)
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("精简VPK不包含任何文件")
 	}
 	return nil
 }
@@ -210,6 +255,10 @@ func trimRawSingleFileVPK(sourcePath, trimmedPath string) (int, int64, error) {
 			newEntry.Chunks = append(newEntry.Chunks, newChunk)
 		}
 		kept = append(kept, newEntry)
+	}
+
+	if len(kept) == 0 {
+		return 0, 0, fmt.Errorf("%w: 所有条目都被判定为客户端资源", errRawVPKTrimEmpty)
 	}
 
 	newTree, err := buildRawVPKTree(kept)

@@ -1,0 +1,21 @@
+FROM docker.1panel.live/library/node:24-alpine AS web-builder
+WORKDIR /app/frontend
+COPY ./frontend/package.json ./frontend/package-lock.json ./
+RUN npm ci --registry=https://registry.npmmirror.com
+COPY ./frontend .
+RUN npm run build
+
+FROM docker.1panel.live/library/golang:1.26.10-alpine AS builder
+ARG VERSION=2026.11.11
+ENV GOPROXY=https://goproxy.cn,direct \
+    GOFLAGS=-p=1 \
+    GOMAXPROCS=2
+WORKDIR /app/backend
+COPY ./backend/go.mod ./backend/go.sum ./
+RUN go mod download
+COPY ./backend .
+RUN go build -ldflags "-X l4d2-manager-next/consts.Version=${VERSION}" -o /app/l4d2-manager
+
+FROM l4d2-manager-next:nonroot-20261105
+COPY --chown=1000:1001 --from=builder /app/l4d2-manager /l4d2-manager
+COPY --chown=1000:1001 --from=web-builder /app/backend/static /static

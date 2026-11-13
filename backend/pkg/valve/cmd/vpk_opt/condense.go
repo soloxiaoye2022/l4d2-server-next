@@ -99,7 +99,7 @@ func condenseArchive(o *vpk.Opener, a *vpk.Archive, dir string, archive int) {
 	}
 
 	unused := &interval.U64SpanList{
-		{0, uint64(len(b))},
+		{Start: 0, End: uint64(len(b))},
 	}
 
 	for _, e := range a.Files {

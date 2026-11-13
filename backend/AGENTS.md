@@ -102,7 +102,9 @@ backend/
 - 路径输入必须先规范化和限定根目录。上传 ID 只接受规范 RFC 4122 v4 UUID；删除优先使用 `os.OpenRoot`。
 - 配置文件优先采用临时文件 + `Sync` + `Rename` 原子替换；保留原文件权限。
 - 共享运行状态使用 mutex、不可变快照或 channel；不要返回仍会被后台修改的 map/slice。
-- RCON 地址/密码统一读取 `L4D2_RCON_URL`、`L4D2_RCON_PASSWORD`。
+- RCON 主机/密码统一读取 `L4D2_RCON_URL`、`L4D2_RCON_PASSWORD`；端口默认从
+  `L4D2_STARTUP_UNIT_PATH` 的启动项解析，兼容 `L4D2_SERVER_UNIT_FILE`；
+  `L4D2_RCON_PORT` 可显式覆盖，`L4D2_PORT` 仅作无启动项时的兜底。
 - 修改 Go 文件后运行 `go fmt ./...`；针对性测试通过后再运行 `go test ./...` 和 `go build .`。
 
 ## SECURITY-SENSITIVE AREAS

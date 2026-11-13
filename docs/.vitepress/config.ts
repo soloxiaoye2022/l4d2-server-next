@@ -47,6 +47,8 @@ export default defineConfig({
           { text: 'RCON 控制台', link: '/features/rcon' },
           { text: '服务器信息', link: '/features/server-info' },
           { text: '服务器配置', link: '/features/server-config' },
+          { text: '启动项管理', link: '/features/server-startup' },
+          { text: '服务端维护', link: '/features/server-maintenance' },
           { text: '备份管理', link: '/features/backup' },
           { text: '日志查看', link: '/features/logs' },
           { text: '访问控制', link: '/features/access-control' },
@@ -60,6 +62,7 @@ export default defineConfig({
           { text: '插件 ZIP 规范', link: '/operations/plugin-package' },
           { text: '地图资源精简', link: '/operations/map-trim' },
           { text: '备份迁移流程', link: '/operations/migration' },
+          { text: '单面板多实例设计', link: '/operations/multi-instance-panel' },
           { text: '常见问题排查', link: '/operations/troubleshooting' },
           { text: '构建与开发', link: '/development/build' }
         ]

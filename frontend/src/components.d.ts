@@ -65,6 +65,7 @@ declare module 'vue' {
     ATextarea: typeof import('ant-design-vue/es')['Textarea']
     ATooltip: typeof import('ant-design-vue/es')['Tooltip']
     AUploadDragger: typeof import('ant-design-vue/es')['UploadDragger']
+    CvarDefinitionDetails: typeof import('./components/settings/CvarDefinitionDetails.vue')['default']
     DifficultyModal: typeof import('./components/DifficultyModal.vue')['default']
     DiskUsageLimitSetting: typeof import('./components/settings/DiskUsageLimitSetting.vue')['default']
     GameBlacklistTab: typeof import('./components/GameBlacklistTab.vue')['default']
@@ -84,6 +85,7 @@ declare module 'vue' {
     PluginDetailModal: typeof import('./components/PluginDetailModal.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SteamAPIKeySetting: typeof import('./components/settings/SteamAPIKeySetting.vue')['default']
     SteamCDNSetting: typeof import('./components/settings/SteamCDNSetting.vue')['default']
     TextFileEditorModal: typeof import('./components/TextFileEditorModal.vue')['default']
   }

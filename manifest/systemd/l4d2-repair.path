@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for L4D2 Manager addon repair requests
+
+[Path]
+PathChanged=/opt/l4d2-manager/control/repair-request.json
+Unit=l4d2-repair.service
+
+[Install]
+WantedBy=paths.target

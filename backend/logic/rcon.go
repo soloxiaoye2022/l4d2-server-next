@@ -14,9 +14,15 @@ type rconSession interface {
 }
 
 func openRconSession() (rconSession, error) {
-	url := os.Getenv("L4D2_RCON_URL")
-	if url == "" {
-		return nil, fmt.Errorf("服务端未配置RCON链接")
+	return DialRconConnection()
+}
+
+// DialRconConnection is the single entry point for RCON connections so every
+// feature follows the same dynamically resolved server port.
+func DialRconConnection() (*rcon.Conn, error) {
+	url, err := ResolveRconURL()
+	if err != nil {
+		return nil, err
 	}
 	password := os.Getenv("L4D2_RCON_PASSWORD")
 	if password == "" {

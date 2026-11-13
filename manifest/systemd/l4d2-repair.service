@@ -1,0 +1,6 @@
+[Unit]
+Description=Quarantine broken L4D2 addon VPKs and optionally restart the game
+
+[Service]
+Type=oneshot
+ExecStart=/opt/l4d2-manager/repair-addons.sh

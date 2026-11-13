@@ -1,4 +1,5 @@
 import { DIFFICULTY_MAP, GAMEMODE_MAP } from './gameConstants';
+import { displayPlayerName } from './playerName';
 
 export interface PlayerInfo {
   id: number | string;
@@ -172,7 +173,7 @@ export function parseStatus(data: any): ParsedServerStatus {
         label: 'Online Users',
         users: users.map((u: any) => ({
           id: u.id || u.Id,
-          name: u.name || u.Name,
+          name: displayPlayerName(u.name || u.Name),
           steamid: u.steamid || u.SteamId,
           ip: u.ip || u.Ip,
           location: u.location || u.Location,

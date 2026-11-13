@@ -11,6 +11,10 @@ RCON 控制台依赖管理器环境变量：
 - `L4D2_RCON_URL`：游戏服 RCON 地址，例如 `127.0.0.1:27015` 或 Docker 网络中的 `l4d2:27015`。
 - `L4D2_RCON_PASSWORD`：游戏服 RCON 密码。
 
+管理器会保留 `L4D2_RCON_URL` 中的主机地址，并自动从当前启动项读取游戏端口。通过“启动项管理”修改 `+hostport`、`+port` 或 `-port` 后，状态查询、控制台和其他 RCON 操作会直接使用新端口，无需修改环境变量或重启管理器。
+
+启动项默认读取 `/control/l4d2.service`。可通过 `L4D2_STARTUP_UNIT_PATH` 指定路径；旧部署使用的 `L4D2_SERVER_UNIT_FILE` 仍作为兼容别名。`L4D2_RCON_PORT` 用于显式覆盖，`L4D2_PORT` 仅在无法读取启动项时作为游戏端口兜底。
+
 游戏服 `server.cfg` 中也需要设置相同密码：
 
 ```text

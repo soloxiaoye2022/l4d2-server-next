@@ -46,6 +46,117 @@ export interface LogStream {
   close: () => void;
 }
 
+export type ServerDiagnosticLevel = 'error' | 'warning' | 'info';
+
+export interface ServerDiagnosticHint {
+  level: ServerDiagnosticLevel;
+  title: string;
+  detail?: string;
+  suggestion?: string;
+}
+
+export interface ServerDiagnosticsResult {
+  available: boolean;
+  message?: string;
+  request_id?: string;
+  generated_at?: string;
+  service_name?: string;
+  unit_path?: string;
+  unit_modified_at?: string;
+  load_state?: string;
+  active_state?: string;
+  sub_state?: string;
+  unit_file_state?: string;
+  main_pid?: string;
+  exec_main_status?: string;
+  result?: string;
+  n_restarts?: string;
+  active_enter_timestamp?: string;
+  port?: number;
+  port_listening?: boolean;
+  listeners?: string[];
+  processes?: string[];
+  status_text?: string;
+  journal?: string[];
+  hints: ServerDiagnosticHint[];
+  summary?: string;
+}
+
+export type ServerRepairAction =
+  | 'quarantine'
+  | 'quarantine_and_reload'
+  | 'quarantine_and_restart'
+  | 'restart_service'
+  | 'kill_port_and_restart';
+
+export interface PortOwner {
+  command: string;
+  pid: number;
+}
+
+export interface InvalidAddonVPK {
+  name: string;
+  size: number;
+  reason: string;
+}
+
+export interface RepairCleanedReference {
+  file: string;
+  removed: number;
+  backup?: string;
+  error?: string;
+}
+
+export interface RepairReloadState {
+  requested: boolean;
+  ok: boolean;
+  command?: string;
+  message?: string;
+}
+
+export interface RepairRestartState {
+  requested: boolean;
+  ok: boolean;
+  active_state?: string;
+  port?: number;
+  port_listening: boolean;
+  message?: string;
+}
+
+export interface ServerRepairResult {
+  request_id?: string;
+  action: ServerRepairAction;
+  status: 'ok' | 'partial' | 'noop' | 'timeout' | 'error';
+  message: string;
+  addons_dir?: string;
+  quarantine_dir?: string;
+  quarantined: InvalidAddonVPK[];
+  cleaned_references: RepairCleanedReference[];
+  remaining: InvalidAddonVPK[];
+  verify_remaining?: InvalidAddonVPK[];
+  killed?: PortOwner[];
+  reload: RepairReloadState;
+  restart: RepairRestartState;
+  finished_at?: string;
+  timeout: boolean;
+}
+
+export interface ServerRepairHistoryEntry {
+  id: string;
+  at: string;
+  operator?: string;
+  action: ServerRepairAction;
+  status: ServerRepairResult['status'];
+  message: string;
+  quarantine_dir?: string;
+  quarantined: InvalidAddonVPK[];
+  cleaned_references: RepairCleanedReference[];
+  remaining: InvalidAddonVPK[];
+  reload: RepairReloadState;
+  restart: RepairRestartState;
+  duration_ms: number;
+}
+
 export type MapUploadProgressEvent =
   | {
       phase: 'uploading';
@@ -225,6 +336,79 @@ export interface ServerConfigUpdate {
   lobby_connect_only: boolean;
   steam_group: string;
   custom_config: string[];
+}
+
+export interface ServerEndpoint {
+  available: boolean;
+  port: number;
+  service_name: string;
+}
+
+export interface ServerStartupConfig {
+  available: boolean;
+  service_name: string;
+  working_directory: string;
+  exec_start: string;
+  port: number;
+  reload_mode: 'filesystem-watch' | 'command' | 'none';
+  reload_status: 'ready' | 'pending' | 'success' | 'error' | 'unavailable';
+  reload_message?: string;
+  reloaded_at?: string;
+  restart_command_available: boolean;
+  startup_comments: string[];
+}
+
+export interface ServerStartupUpdate {
+  working_directory: string;
+  exec_start: string;
+  startup_comments: string[];
+}
+
+export interface SourceTVSupportStatus {
+  version: string;
+  platform: string;
+  available: boolean;
+  installed: boolean;
+  sourcemod_present: boolean;
+  missing_files: string[];
+  modified_files: string[];
+  installed_at?: string;
+  restart_required: boolean;
+  loaded: boolean;
+  load_state: 'not_installed' | 'not_loaded' | 'loaded' | 'unknown';
+  startup_broadcast_enabled: boolean;
+  startup_tv_enabled: boolean;
+  startup_tv_port?: number;
+  recommended_tv_port: number;
+  repository_url: string;
+  known_limitation: string;
+}
+
+export interface SteamCMDUpdateConfig {
+  available: boolean;
+  steam_directory: string;
+  install_directory: string;
+  script_path: string;
+  script_exists: boolean;
+  script_sha256?: string;
+  script_content?: string;
+  generated_at?: string;
+  autoupdate_enabled: boolean;
+}
+
+export interface ServerMaintenanceStatus {
+  action: 'check' | 'update' | '';
+  status: 'idle' | 'pending' | 'running' | 'success' | 'error';
+  message: string;
+  installed_build_id: string;
+  latest_build_id: string;
+  update_available: boolean;
+  log_tail: string;
+  finished_at: string;
+  requested_at?: string;
+  steam_directory: string;
+  install_directory: string;
+  service_name: string;
 }
 
 export interface Plugin {
@@ -474,6 +658,12 @@ export interface PlayerStatsConfig {
   interval_minutes: number;
   retention_days: number;
   last_snapshot?: PlayerStatsSnapshot | null;
+}
+
+export interface SteamAPIKeyStatus {
+  configured: boolean;
+  source: 'none' | 'panel' | 'environment';
+  masked_key: string;
 }
 
 export interface MonitorConfig {
@@ -829,6 +1019,25 @@ class ApiService {
     const response = await this.post('/restart');
     if (!response.ok) throw new Error(await response.text());
     return response.text();
+  }
+
+  async getServerDiagnostics(): Promise<ServerDiagnosticsResult> {
+    const response = await this.post('/server-startup/diagnostics');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async repairServerAddons(action: ServerRepairAction): Promise<ServerRepairResult> {
+    const response = await this.postJson('/server-startup/repair', { action });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getServerRepairHistory(limit = 20): Promise<ServerRepairHistoryEntry[]> {
+    const response = await this.postJson('/server-startup/repair/history', { limit });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    return data?.entries || [];
   }
 
   async setMaxPlayers(maxPlayers: number) {
@@ -1840,6 +2049,74 @@ class ApiService {
     return response.json();
   }
 
+  async getServerEndpoint(): Promise<ServerEndpoint> {
+    const response = await this.post('/server-startup/endpoint');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getServerStartup(): Promise<ServerStartupConfig> {
+    const response = await this.post('/server-startup/get');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async updateServerStartup(data: ServerStartupUpdate): Promise<ServerStartupConfig> {
+    const response = await this.postJson('/server-startup/update', data);
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getSourceTVSupport(): Promise<SourceTVSupportStatus> {
+    const response = await this.post('/server-maintenance/sourcetv/status');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async installSourceTVSupport(): Promise<SourceTVSupportStatus> {
+    const response = await this.post('/server-maintenance/sourcetv/install');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async configureSourceTVStartup(): Promise<ServerStartupConfig> {
+    const response = await this.post('/server-maintenance/sourcetv/configure');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getServerMaintenanceStatus(): Promise<ServerMaintenanceStatus> {
+    const response = await this.post('/server-maintenance/status');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async checkL4D2ServerUpdate(): Promise<ServerMaintenanceStatus> {
+    const response = await this.post('/server-maintenance/update/check');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async updateL4D2Server(): Promise<ServerMaintenanceStatus> {
+    const response = await this.post('/server-maintenance/update/apply');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getSteamCMDUpdate(): Promise<SteamCMDUpdateConfig> {
+    const response = await this.post('/server-startup/steamcmd/status');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async generateSteamCMDUpdate(steamDirectory: string): Promise<SteamCMDUpdateConfig> {
+    const response = await this.postJson('/server-startup/steamcmd/generate', {
+      steam_directory: steamDirectory,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
   async getVersion() {
     const response = await this.post('/getVersion');
     if (!response.ok) throw new Error(await response.text());
@@ -2080,6 +2357,18 @@ class ApiService {
 
   async setPlayerStatsConfig(enable: boolean) {
     const response = await this.postJson('/config/player-stats', { enable });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async getSteamAPIKeyStatus(): Promise<SteamAPIKeyStatus> {
+    const response = await this.post('/player-stats/steam-api-key');
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
+  async updateSteamAPIKey(apiKey: string): Promise<SteamAPIKeyStatus> {
+    const response = await this.postJson('/player-stats/steam-api-key/update', { api_key: apiKey });
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }

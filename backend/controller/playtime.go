@@ -2,8 +2,8 @@ package controller
 
 import (
 	"fmt"
+	"l4d2-manager-next/logic"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -59,9 +59,9 @@ type SteamUserStatsResponse struct {
 }
 
 func getPlaytimeDetails(steamID string) (float64, float64, error) {
-	key := os.Getenv("STEAM_API_KEY")
+	key := logic.GetSteamAPIKey()
 	if key == "" {
-		return 0, 0, fmt.Errorf("未设置STEAM_API_KEY，请在https://steamcommunity.com/dev/apikey获取并设置")
+		return 0, 0, fmt.Errorf("未设置 Steam API Key，请前往“系统管理 → 玩家统计设置 → Steam API 密钥”填写")
 	}
 
 	id, err := convertSteamIDToSteam64ID(steamID)

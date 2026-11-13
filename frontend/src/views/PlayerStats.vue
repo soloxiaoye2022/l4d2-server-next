@@ -286,6 +286,7 @@
   } from '../services/api';
   import { useAuthStore } from '../stores/auth';
   import { useThemeStore } from '../stores/theme';
+  import { displayPlayerName } from '../utils/playerName';
 
   echarts.use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
@@ -473,7 +474,10 @@
     searchLoading.value = true;
     try {
       const { start } = getBaseRange();
-      players.value = await api.searchPlayerStatsPlayers(keyword.value, start);
+      players.value = (await api.searchPlayerStatsPlayers(keyword.value, start)).map((player) => ({
+        ...player,
+        name: displayPlayerName(player.name),
+      }));
     } catch (e: any) {
       message.error(`搜索玩家失败: ${e.message}`);
     } finally {
@@ -483,7 +487,7 @@
 
   const selectPlayer = async (player: PlayerStatsPlayer | Record<string, any>) => {
     const selected = player as PlayerStatsPlayer;
-    selectedPlayer.value = selected;
+    selectedPlayer.value = { ...selected, name: displayPlayerName(selected.name) };
     detailOpen.value = true;
     await fetchPlayerDetail(selected);
   };
@@ -494,7 +498,16 @@
       const { start, end } = getBaseRange();
       const detail = await api.getPlayerStatsPlayerDays(player.steam_id, start, end);
       playerDays.value = detail.days || [];
-      playerAliases.value = detail.aliases || [];
+      playerAliases.value = (detail.aliases || []).map((alias) => ({
+        ...alias,
+        name: displayPlayerName(alias.name),
+      }));
+      if (detail.player) {
+        selectedPlayer.value = {
+          ...detail.player,
+          name: displayPlayerName(detail.player.name || player.name),
+        };
+      }
     } catch (e: any) {
       message.error(`查询玩家在线日期失败: ${e.message}`);
     } finally {

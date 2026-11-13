@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +29,21 @@ func TestRconReturnsCompleteMultiPacketOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { listener.Close() })
-	t.Setenv("L4D2_RCON_URL", listener.Addr().String())
+
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unitPath := filepath.Join(t.TempDir(), "l4d2.service")
+	unit := fmt.Sprintf("[Service]\nExecStart=/l4d2/srcds_run -game left4dead2 +hostport %s\n", port)
+	if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the environment port stale so this test proves the request follows
+	// the port configured in the server startup unit.
+	t.Setenv("L4D2_RCON_URL", net.JoinHostPort(host, "1"))
+	t.Setenv("L4D2_RCON_PORT", "")
+	t.Setenv("L4D2_SERVER_UNIT_FILE", unitPath)
 	t.Setenv("L4D2_RCON_PASSWORD", "test-password")
 	// The first Chinese character crosses the first 4096-byte packet boundary.
 	want := strings.Repeat("x", 4095) + strings.Repeat("插件输出\n", 1000) + "最后一行\n"

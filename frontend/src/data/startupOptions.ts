@@ -1,0 +1,735 @@
+export type StartupOptionCategory =
+  | 'core'
+  | 'network'
+  | 'gameplay'
+  | 'security'
+  | 'hltv'
+  | 'wrapper'
+  | 'advanced';
+
+export type StartupValueKind = 'text' | 'number' | 'select';
+
+export interface StartupSelectValue {
+  label: string;
+  value: string;
+}
+
+export interface StartupValueDefinition {
+  kind: StartupValueKind;
+  defaultValue: string;
+  placeholder?: string;
+  options?: StartupSelectValue[];
+  min?: number;
+  max?: number;
+}
+
+export interface StartupOptionDefinition {
+  id: string;
+  name: string;
+  category: StartupOptionCategory;
+  description: string;
+  aliases: string[];
+  value?: StartupValueDefinition;
+  required?: boolean;
+  risk?: 'normal' | 'warning' | 'advanced';
+  recommended?: boolean;
+  requiresPlugin?: string;
+  integration?: 'sourcetv';
+}
+
+export interface StartupPresetItem {
+  definitionId: string;
+  value?: string;
+}
+
+export interface StartupPreset {
+  id: string;
+  name: string;
+  description: string;
+  risk?: 'normal' | 'warning' | 'advanced';
+  items: StartupPresetItem[];
+}
+
+export const startupCategoryLabels: Record<StartupOptionCategory, string> = {
+  core: '基础启动',
+  network: '网络连接',
+  gameplay: '游戏玩法',
+  security: '安全与诊断',
+  hltv: 'SourceTV',
+  wrapper: '启动器控制',
+  advanced: '高级与调试',
+};
+
+export const startupCategoryOrder: StartupOptionCategory[] = [
+  'core',
+  'network',
+  'gameplay',
+  'security',
+  'hltv',
+  'wrapper',
+  'advanced',
+];
+
+export const startupOptions: StartupOptionDefinition[] = [
+  {
+    id: 'game',
+    name: '游戏目录',
+    category: 'core',
+    description: '指定 Source 专用服务器加载的游戏目录，L4D2 固定使用 left4dead2。',
+    aliases: ['-game'],
+    value: { kind: 'select', defaultValue: 'left4dead2', options: [{ label: 'Left 4 Dead 2', value: 'left4dead2' }] },
+    required: true,
+    recommended: true,
+  },
+  {
+    id: 'map',
+    name: '首张地图',
+    category: 'core',
+    description: '服务器启动后立即载入的地图。不填写时 srcds_run 会回退到 c1m1_hotel。',
+    aliases: ['+map'],
+    value: { kind: 'text', defaultValue: 'c1m1_hotel', placeholder: 'c1m1_hotel' },
+    recommended: true,
+  },
+  {
+    id: 'maxplayers',
+    name: '最大玩家数',
+    category: 'core',
+    description: '服务端允许的最大连接人数。原版通常为 4-8 人，超过原版上限需要人数扩展插件。',
+    aliases: ['+maxplayers', '-maxplayers'],
+    value: { kind: 'number', defaultValue: '8', min: 1, max: 31 },
+    recommended: true,
+  },
+  {
+    id: 'tickrate',
+    name: '服务器 Tickrate',
+    category: 'core',
+    description: '服务端每秒模拟次数。常用 30、60、100、128；应与服务器配置模板和网络能力匹配。',
+    aliases: ['-tickrate'],
+    value: {
+      kind: 'select',
+      defaultValue: '100',
+      options: [
+        { label: '30 tick', value: '30' },
+        { label: '60 tick', value: '60' },
+        { label: '100 tick', value: '100' },
+        { label: '128 tick', value: '128' },
+      ],
+    },
+    recommended: true,
+  },
+  {
+    id: 'exec',
+    name: '启动执行配置',
+    category: 'core',
+    description: '服务器启动时执行的 cfg 文件，通常为 server.cfg。',
+    aliases: ['+exec'],
+    value: { kind: 'text', defaultValue: 'server.cfg', placeholder: 'server.cfg' },
+    recommended: true,
+  },
+  {
+    id: 'hostport',
+    name: '服务器端口',
+    category: 'core',
+    description: '玩家连接和服务器通信使用的 UDP/TCP 端口，需在防火墙和云安全组放行。',
+    aliases: ['+hostport', '+port', '-port'],
+    value: { kind: 'number', defaultValue: '27015', min: 1, max: 65535 },
+    recommended: true,
+  },
+  {
+    id: 'ip',
+    name: '绑定 IP',
+    category: 'core',
+    description: '服务器监听的本地地址。0.0.0.0 表示监听全部 IPv4 网卡。',
+    aliases: ['+ip', '-ip'],
+    value: { kind: 'text', defaultValue: '0.0.0.0', placeholder: '0.0.0.0' },
+    recommended: true,
+  },
+  {
+    id: 'servercfgfile',
+    name: '服务端配置文件名',
+    category: 'core',
+    description: '告诉游戏服务端主配置文件名称，通常与 +exec 搭配使用。',
+    aliases: ['+servercfgfile'],
+    value: { kind: 'text', defaultValue: 'server.cfg', placeholder: 'server.cfg' },
+  },
+  {
+    id: 'clientport',
+    name: '客户端本地端口',
+    category: 'network',
+    description: 'Source 客户端侧连接使用的本地端口。专用服务器通常无需设置。',
+    aliases: ['+clientport'],
+    value: { kind: 'number', defaultValue: '27005', min: 1, max: 65535 },
+    risk: 'advanced',
+  },
+  {
+    id: 'steamport',
+    name: 'Steam 通信端口',
+    category: 'network',
+    description: 'Steam 网络通信使用的端口。只有特殊网络布局或多实例部署时才需要指定。',
+    aliases: ['-steamport'],
+    value: { kind: 'number', defaultValue: '26900', min: 1, max: 65535 },
+    risk: 'advanced',
+  },
+  {
+    id: 'sv_lan',
+    name: '局域网模式',
+    category: 'network',
+    description: '设为 1 时按局域网服务器运行，通常不会出现在公网服务器列表。',
+    aliases: ['+sv_lan'],
+    value: { kind: 'select', defaultValue: '0', options: [{ label: '关闭（公网）', value: '0' }, { label: '开启（局域网）', value: '1' }] },
+  },
+  {
+    id: 'nomaster',
+    name: '不向 Master 服务器注册',
+    category: 'network',
+    description: '禁止服务端向 Steam Master 服务器注册，通常用于纯直连、局域网或代理后端。',
+    aliases: ['-nomaster'],
+    risk: 'warning',
+  },
+  {
+    id: 'nodns',
+    name: '禁用 DNS',
+    category: 'network',
+    description: '跳过域名解析相关初始化，只适合已确认网络环境稳定的特殊部署。',
+    aliases: ['-nodns'],
+    risk: 'advanced',
+  },
+  {
+    id: 'noip',
+    name: '禁用 IP 初始化',
+    category: 'network',
+    description: '跳过 IP 相关初始化，可能影响服务器注册与网络发现。',
+    aliases: ['-noip'],
+    risk: 'advanced',
+  },
+  {
+    id: 'usetcp',
+    name: '启用额外 TCP 路径',
+    category: 'network',
+    description: '实验性选项，把引擎 net_notcp 从默认开启改为关闭，允许额外 TCP 监听/连接路径；不会把 L4D2 游戏协议切换成纯 TCP，常规联机仍依赖 UDP。',
+    aliases: ['-usetcp'],
+    risk: 'advanced',
+  },
+  {
+    id: 'usercon',
+    name: '启用外部 RCON',
+    category: 'network',
+    description: '启用引擎的外部远程控制支持。RCON 密码仍应只写在 server.cfg 或环境变量中。',
+    aliases: ['-usercon'],
+    risk: 'warning',
+  },
+  {
+    id: 'netconport',
+    name: '外部控制台端口',
+    category: 'network',
+    description: '指定 Source 外部控制台监听端口，仅建议高级用户使用。',
+    aliases: ['-netconport'],
+    value: { kind: 'number', defaultValue: '27016', min: 1, max: 65535 },
+    risk: 'advanced',
+  },
+  {
+    id: 'mp_gamemode',
+    name: '游戏模式',
+    category: 'gameplay',
+    description: '指定服务器启动时的 L4D2 游戏模式。阵营、导演和地图规则由对应模式接管。',
+    aliases: ['+mp_gamemode'],
+    value: {
+      kind: 'select',
+      defaultValue: 'coop',
+      options: [
+        { label: '战役合作', value: 'coop' },
+        { label: '写实合作', value: 'realism' },
+        { label: '对抗', value: 'versus' },
+        { label: '生存', value: 'survival' },
+        { label: '清道夫', value: 'scavenge' },
+        { label: '坚守', value: 'holdout' },
+        { label: '突变模式', value: 'mutation' },
+      ],
+    },
+    recommended: true,
+  },
+  {
+    id: 'z_difficulty',
+    name: '游戏难度',
+    category: 'gameplay',
+    description: '指定战役、写实和部分突变模式的难度。',
+    aliases: ['+z_difficulty'],
+    value: {
+      kind: 'select',
+      defaultValue: 'Impossible',
+      options: [
+        { label: '简单', value: 'Easy' },
+        { label: '普通', value: 'Normal' },
+        { label: '高级', value: 'Hard' },
+        { label: '专家', value: 'Impossible' },
+      ],
+    },
+    recommended: true,
+  },
+  {
+    id: 'sv_setmax',
+    name: '引擎客户端槽位上限',
+    category: 'gameplay',
+    description: '修改引擎 MaxClients 槽位上限，不是实际可玩人数。需要 l4dtoolz；建议最高 31，并继续用 sv_maxplayers 控制真正可进入的人数。',
+    aliases: ['+sv_setmax'],
+    value: { kind: 'number', defaultValue: '31', min: 1, max: 31 },
+    risk: 'warning',
+    requiresPlugin: 'l4dtoolz',
+  },
+  {
+    id: 'sv_maxplayers',
+    name: '实际可玩人数',
+    category: 'gameplay',
+    description: 'L4DToolz 提供的实际玩家上限，和引擎槽位 sv_setmax 分开设置。',
+    aliases: ['+sv_maxplayers'],
+    value: { kind: 'number', defaultValue: '31', min: -1, max: 31 },
+    risk: 'warning',
+    requiresPlugin: 'l4dtoolz',
+  },
+  {
+    id: 'sv_visiblemaxplayers',
+    name: '显示最大人数',
+    category: 'gameplay',
+    description: '控制服务器浏览器和状态中显示的可见人数上限。',
+    aliases: ['+sv_visiblemaxplayers'],
+    value: { kind: 'number', defaultValue: '31', min: -1, max: 31 },
+    risk: 'advanced',
+  },
+  {
+    id: 'sv_search_key',
+    name: '匹配搜索键',
+    category: 'gameplay',
+    description: '用于 Steam 匹配的搜索键。相同搜索键的服务器可被匹配系统关联。',
+    aliases: ['+sv_search_key'],
+    value: { kind: 'text', defaultValue: '', placeholder: '自定义搜索键' },
+  },
+  {
+    id: 'sv_region',
+    name: '服务器区域',
+    category: 'gameplay',
+    description: '设置服务器所在数字区域，用于服务器浏览器筛选。',
+    aliases: ['+sv_region'],
+    value: { kind: 'number', defaultValue: '4', min: 0, max: 255 },
+    risk: 'advanced',
+  },
+  {
+    id: 'sv_tags',
+    name: '服务器标签',
+    category: 'gameplay',
+    description: '逗号分隔的服务器标签，例如 hidden、coop、中文服。',
+    aliases: ['+sv_tags'],
+    value: { kind: 'text', defaultValue: 'hidden', placeholder: 'hidden,coop' },
+  },
+  {
+    id: 'sv_allow_lobby_connect_only',
+    name: '仅允许大厅匹配连接',
+    category: 'gameplay',
+    description: '设为 1 时只允许通过大厅匹配加入；设为 0 时允许直接 IP 连接。',
+    aliases: ['+sv_allow_lobby_connect_only'],
+    value: { kind: 'select', defaultValue: '0', options: [{ label: '允许直连（0）', value: '0' }, { label: '仅大厅（1）', value: '1' }] },
+    recommended: true,
+  },
+  {
+    id: 'allow_all_bot_survivor_team',
+    name: '允许全机器人幸存者',
+    category: 'gameplay',
+    description: '允许没有真人玩家时由机器人组成完整幸存者队伍。',
+    aliases: ['+allow_all_bot_survivor_team'],
+    value: { kind: 'select', defaultValue: '1', options: [{ label: '关闭', value: '0' }, { label: '开启', value: '1' }] },
+  },
+  {
+    id: 'sb_all_bot_game',
+    name: '全机器人游戏',
+    category: 'gameplay',
+    description: '允许在无真人玩家时持续进行机器人对局，常用于常驻服。',
+    aliases: ['+sb_all_bot_game'],
+    value: { kind: 'select', defaultValue: '1', options: [{ label: '关闭', value: '0' }, { label: '开启', value: '1' }] },
+  },
+  {
+    id: 'director_no_death_check',
+    name: '关闭导演死亡检测',
+    category: 'gameplay',
+    description: '关闭导演对全队死亡状态的检查，通常只用于测试或特殊玩法。',
+    aliases: ['+director_no_death_check'],
+    value: { kind: 'select', defaultValue: '1', options: [{ label: '关闭', value: '0' }, { label: '开启', value: '1' }] },
+    risk: 'advanced',
+  },
+  {
+    id: 'sv_steamgroup',
+    name: 'Steam 组 ID',
+    category: 'gameplay',
+    description: '关联 Steam 组，组成员可在服务器浏览器中更容易找到服务器。',
+    aliases: ['+sv_steamgroup'],
+    value: { kind: 'text', defaultValue: '', placeholder: 'Steam 组数字 ID' },
+  },
+  {
+    id: 'sv_password',
+    name: '服务器密码',
+    category: 'security',
+    description: '设置连接服务器所需密码。密码会出现在服务单元和 systemctl 状态中，不建议在这里保存。',
+    aliases: ['+sv_password'],
+    value: { kind: 'text', defaultValue: '', placeholder: '建议改在 server.cfg 设置' },
+    risk: 'warning',
+  },
+  {
+    id: 'insecure',
+    name: '关闭 VAC',
+    category: 'security',
+    description: '以 -insecure 模式启动，关闭 VAC 安全校验。插件服常这样配置，但会失去 VAC 保护。',
+    aliases: ['-insecure'],
+    risk: 'warning',
+    recommended: true,
+  },
+  {
+    id: 'nocrashdialog',
+    name: '禁用崩溃弹窗',
+    category: 'security',
+    description: '崩溃时不显示图形弹窗，适合无桌面 Linux 服务器。',
+    aliases: ['-nocrashdialog'],
+  },
+  {
+    id: 'nobreakpad',
+    name: '禁用 Breakpad',
+    category: 'security',
+    description: '关闭 Breakpad 崩溃转储初始化。会减少崩溃报告能力。',
+    aliases: ['-nobreakpad'],
+    risk: 'advanced',
+  },
+  {
+    id: 'nominidumps',
+    name: '禁用小型转储',
+    category: 'security',
+    description: '崩溃时不生成 minidump 文件，适合不希望积累转储文件的部署。',
+    aliases: ['-nominidumps'],
+    risk: 'advanced',
+  },
+  {
+    id: 'safe',
+    name: '安全启动模式',
+    category: 'security',
+    description: '以引擎安全模式启动，通常用于排查插件或资源导致的启动异常。',
+    aliases: ['-safe'],
+    risk: 'advanced',
+  },
+  {
+    id: 'allowdebug',
+    name: '允许调试命令',
+    category: 'security',
+    description: '允许部分受限制的调试命令，仅建议临时排障使用。',
+    aliases: ['-allowdebug'],
+    risk: 'advanced',
+  },
+  {
+    id: 'dev',
+    name: '开发者模式',
+    category: 'security',
+    description: '启用开发者输出和额外断言，会显著增加日志量。',
+    aliases: ['-dev'],
+    risk: 'advanced',
+  },
+  {
+    id: 'hltv',
+    name: '启用 SourceTV 广播',
+    category: 'hltv',
+    description: '开启 L4D2 SourceTV 广播所需的基础开关。L4D2 原版广播不完整，建议安装 sourcetvsupport 修复扩展。',
+    aliases: ['-hltv'],
+    risk: 'warning',
+    integration: 'sourcetv',
+  },
+  {
+    id: 'tv_enable',
+    name: '启用 SourceTV',
+    category: 'hltv',
+    description: '在首张地图启动时启用 SourceTV。L4D2 原版通常需要 sourcetvsupport 修复才能稳定广播和录像。',
+    aliases: ['+tv_enable'],
+    value: { kind: 'select', defaultValue: '1', options: [{ label: '关闭', value: '0' }, { label: '开启', value: '1' }] },
+    risk: 'warning',
+    integration: 'sourcetv',
+  },
+  {
+    id: 'tv_port',
+    name: 'SourceTV 端口',
+    category: 'hltv',
+    description: 'SourceTV 连接端口，必须与游戏服端口和管理面板端口错开。',
+    aliases: ['+tv_port'],
+    value: { kind: 'number', defaultValue: '27021', min: 1, max: 65535 },
+    risk: 'warning',
+    integration: 'sourcetv',
+  },
+  {
+    id: 'tv_maxclients',
+    name: 'SourceTV 最大观众数',
+    category: 'hltv',
+    description: '允许同时连接 SourceTV 的观众数量。',
+    aliases: ['+tv_maxclients'],
+    value: { kind: 'number', defaultValue: '8', min: 1, max: 255 },
+    integration: 'sourcetv',
+  },
+  {
+    id: 'tv_delay',
+    name: 'SourceTV 延迟',
+    category: 'hltv',
+    description: 'SourceTV 转发延迟秒数，用于避免观战者实时获取比赛信息。',
+    aliases: ['+tv_delay'],
+    value: { kind: 'number', defaultValue: '90', min: 0, max: 600 },
+    integration: 'sourcetv',
+  },
+  {
+    id: 'tv_autorecord',
+    name: 'SourceTV 自动录像',
+    category: 'hltv',
+    description: '自动为 SourceTV 记录比赛录像。L4D2 原版录像存在缺陷，建议先安装 sourcetvsupport。',
+    aliases: ['+tv_autorecord'],
+    value: { kind: 'select', defaultValue: '1', options: [{ label: '关闭', value: '0' }, { label: '开启', value: '1' }] },
+    risk: 'warning',
+    integration: 'sourcetv',
+  },
+  {
+    id: 'tvmasteronly',
+    name: '仅作为 SourceTV 主服务器',
+    category: 'hltv',
+    description: '限制 SourceTV 只服务一个客户端，不作为中继代理。sourcetvsupport 的作者明确说明中继功能仍不完整。',
+    aliases: ['-tvmasteronly'],
+    risk: 'advanced',
+    integration: 'sourcetv',
+  },
+  {
+    id: 'nohltv',
+    name: '禁用 SourceTV',
+    category: 'hltv',
+    description: '完全禁用 SourceTV 子系统。',
+    aliases: ['-nohltv'],
+    risk: 'advanced',
+  },
+  {
+    id: 'condebug',
+    name: '记录控制台日志',
+    category: 'wrapper',
+    description: '把服务器控制台输出写入 left4dead2/console.log，便于排错。',
+    aliases: ['-condebug'],
+    recommended: true,
+  },
+  {
+    id: 'console',
+    name: '控制台窗口',
+    category: 'wrapper',
+    description: 'Windows srcds.exe 启动时显示控制台窗口。Linux 专用服务器不需要。',
+    aliases: ['-console'],
+    risk: 'advanced',
+  },
+  {
+    id: 'debug',
+    name: '崩溃调试模式',
+    category: 'wrapper',
+    description: '让 srcds_run 在崩溃时调用 gdb 并生成调试信息。普通运行不建议开启。',
+    aliases: ['-debug'],
+    risk: 'advanced',
+  },
+  {
+    id: 'debuglog',
+    name: '调试日志文件',
+    category: 'wrapper',
+    description: '配合 -debug 指定调试输出日志路径。',
+    aliases: ['-debuglog'],
+    value: { kind: 'text', defaultValue: 'debug.log', placeholder: 'debug.log' },
+    risk: 'advanced',
+  },
+  {
+    id: 'pidfile',
+    name: 'PID 文件',
+    category: 'wrapper',
+    description: '让 srcds_run 将服务端进程 ID 写入指定文件。systemd 部署通常不需要。',
+    aliases: ['-pidfile'],
+    value: { kind: 'text', defaultValue: 'l4d2.pid', placeholder: 'l4d2.pid' },
+    risk: 'advanced',
+  },
+  {
+    id: 'timeout',
+    name: '崩溃重启等待',
+    category: 'wrapper',
+    description: 'srcds_run 在服务端崩溃后等待多少秒再重启。systemd 自己也会管理重启。',
+    aliases: ['-timeout'],
+    value: { kind: 'number', defaultValue: '5', min: 0, max: 3600 },
+  },
+  {
+    id: 'autoupdate',
+    name: '启动前自动更新',
+    category: 'wrapper',
+    description: '通过 SteamCMD 在启动前更新服务端，需要同时配置 steam_dir 和 steamcmd_script。页面下方的 SteamCMD 功能可以自动生成双平台更新脚本。',
+    aliases: ['-autoupdate'],
+    risk: 'warning',
+  },
+  {
+    id: 'steam_dir',
+    name: 'Steam 目录',
+    category: 'wrapper',
+    description: 'Steam 客户端或 SteamCMD 所在目录，配合 -autoupdate 使用。',
+    aliases: ['-steam_dir'],
+    value: { kind: 'text', defaultValue: '/root/steamcmd', placeholder: '/root/steamcmd' },
+    risk: 'advanced',
+  },
+  {
+    id: 'steamcmd_script',
+    name: 'SteamCMD 更新脚本',
+    category: 'wrapper',
+    description: '自动更新时执行的 SteamCMD 脚本路径，配合 -autoupdate 使用。可由页面下方的 SteamCMD 功能自动生成并填入。',
+    aliases: ['-steamcmd_script'],
+    value: { kind: 'text', defaultValue: '', placeholder: '/path/to/update.txt' },
+    risk: 'advanced',
+  },
+  {
+    id: 'norestart',
+    name: '禁用包装器自动重启',
+    category: 'wrapper',
+    description: 'srcds_run 崩溃后不自行重启。systemd 部署通常保持关闭，让 systemd 接管重启。',
+    aliases: ['-norestart'],
+    risk: 'advanced',
+  },
+  {
+    id: 'nodefaultmap',
+    name: '禁用默认地图',
+    category: 'wrapper',
+    description: '没有指定 +map 时，禁止 srcds_run 自动补 c1m1_hotel。',
+    aliases: ['-nodefaultmap'],
+    risk: 'advanced',
+  },
+  {
+    id: 'ignoresigint',
+    name: '忽略 SIGINT',
+    category: 'wrapper',
+    description: '让包装器忽略 Ctrl+C/SIGINT，可能干扰 systemd 正常停止。',
+    aliases: ['-ignoresigint'],
+    risk: 'advanced',
+  },
+  {
+    id: 'notrap',
+    name: '禁用信号 Trap',
+    category: 'wrapper',
+    description: '禁用 srcds_run 的信号 trap 和旧锁文件清理。',
+    aliases: ['-notrap'],
+    risk: 'advanced',
+  },
+  {
+    id: 'nopreload',
+    name: '禁用资源预载',
+    category: 'advanced',
+    description: '跳过部分资源预载流程，可缩短启动时间但可能导致首次载入变慢。',
+    aliases: ['-nopreload'],
+    risk: 'advanced',
+  },
+  {
+    id: 'nogamestats',
+    name: '禁用游戏统计上报',
+    category: 'advanced',
+    description: '关闭引擎的游戏统计上报。',
+    aliases: ['-nogamestats'],
+    risk: 'advanced',
+  },
+];
+
+export const startupPresets: StartupPreset[] = [
+  {
+    id: 'baseline',
+    name: '基础 Linux 服务器',
+    description: '100 tick、关闭 VAC、控制台日志、27015 端口并执行 server.cfg。',
+    items: [
+      { definitionId: 'game', value: 'left4dead2' },
+      { definitionId: 'tickrate', value: '100' },
+      { definitionId: 'insecure' },
+      { definitionId: 'condebug' },
+      { definitionId: 'ip', value: '0.0.0.0' },
+      { definitionId: 'hostport', value: '27015' },
+      { definitionId: 'exec', value: 'server.cfg' },
+    ],
+  },
+  {
+    id: 'coop-expert',
+    name: '合作专家',
+    description: '基础服务器上增加合作模式和专家难度。',
+    items: [
+      { definitionId: 'game', value: 'left4dead2' },
+      { definitionId: 'tickrate', value: '100' },
+      { definitionId: 'insecure' },
+      { definitionId: 'condebug' },
+      { definitionId: 'ip', value: '0.0.0.0' },
+      { definitionId: 'hostport', value: '27015' },
+      { definitionId: 'exec', value: 'server.cfg' },
+      { definitionId: 'mp_gamemode', value: 'coop' },
+      { definitionId: 'z_difficulty', value: 'Impossible' },
+    ],
+  },
+  {
+    id: 'realism-expert',
+    name: '写实专家',
+    description: '基础服务器上增加写实模式和专家难度。',
+    items: [
+      { definitionId: 'game', value: 'left4dead2' },
+      { definitionId: 'tickrate', value: '100' },
+      { definitionId: 'insecure' },
+      { definitionId: 'condebug' },
+      { definitionId: 'ip', value: '0.0.0.0' },
+      { definitionId: 'hostport', value: '27015' },
+      { definitionId: 'exec', value: 'server.cfg' },
+      { definitionId: 'mp_gamemode', value: 'realism' },
+      { definitionId: 'z_difficulty', value: 'Impossible' },
+    ],
+  },
+  {
+    id: 'versus',
+    name: '对抗服务器',
+    description: '基础服务器上增加对抗模式、8 人上限并允许 IP 直连。',
+    items: [
+      { definitionId: 'game', value: 'left4dead2' },
+      { definitionId: 'tickrate', value: '100' },
+      { definitionId: 'insecure' },
+      { definitionId: 'condebug' },
+      { definitionId: 'ip', value: '0.0.0.0' },
+      { definitionId: 'hostport', value: '27015' },
+      { definitionId: 'exec', value: 'server.cfg' },
+      { definitionId: 'mp_gamemode', value: 'versus' },
+      { definitionId: 'maxplayers', value: '8' },
+      { definitionId: 'sv_allow_lobby_connect_only', value: '0' },
+    ],
+  },
+  {
+    id: 'survival',
+    name: '生存服务器',
+    description: '基础服务器上增加生存模式。',
+    items: [
+      { definitionId: 'game', value: 'left4dead2' },
+      { definitionId: 'tickrate', value: '100' },
+      { definitionId: 'insecure' },
+      { definitionId: 'condebug' },
+      { definitionId: 'ip', value: '0.0.0.0' },
+      { definitionId: 'hostport', value: '27015' },
+      { definitionId: 'exec', value: 'server.cfg' },
+      { definitionId: 'mp_gamemode', value: 'survival' },
+    ],
+  },
+  {
+    id: 'sourcetv',
+    name: 'SourceTV 观战',
+    description: '增加 -hltv、SourceTV 和 27021 端口。安装前请先使用 SourceTV 修复功能。',
+    items: [
+      { definitionId: 'hltv' },
+      { definitionId: 'tv_enable', value: '1' },
+      { definitionId: 'tv_port', value: '27021' },
+      { definitionId: 'tv_delay', value: '90' },
+      { definitionId: 'tv_autorecord', value: '1' },
+    ],
+  },
+  {
+    id: 'unlock-maxplayers',
+    name: '引擎槽位扩展',
+    description: '设置 31 个引擎客户端槽位和实际玩家上限，需要 l4dtoolz 支持。',
+    risk: 'warning',
+    items: [
+      { definitionId: 'maxplayers', value: '31' },
+      { definitionId: 'sv_setmax', value: '31' },
+      { definitionId: 'sv_maxplayers', value: '31' },
+      { definitionId: 'sv_visiblemaxplayers', value: '31' },
+    ],
+  },
+];
+
+export const startupOptionsById = new Map(startupOptions.map((option) => [option.id, option]));

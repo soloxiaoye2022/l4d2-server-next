@@ -203,7 +203,7 @@ func ParseUser(line string) *User {
 	}
 
 	return &User{
-		Name:     matches[3],
+		Name:     DisplayPlayerName(matches[3]),
 		Id:       userid,
 		SteamId:  matches[4],
 		Ip:       ip,

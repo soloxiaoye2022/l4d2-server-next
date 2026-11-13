@@ -15,6 +15,7 @@
     WifiOutlined,
     ClockCircleOutlined,
     CopyOutlined,
+    LoginOutlined,
     StopOutlined,
     PlusOutlined,
     SettingOutlined,
@@ -24,6 +25,13 @@
   import MapSelectorModal from '../components/MapSelectorModal.vue';
   import DifficultyModal from '../components/DifficultyModal.vue';
   import GameModeModal from '../components/GameModeModal.vue';
+  import ServerDiagnosticsModal from '../components/ServerDiagnosticsModal.vue';
+  import type {
+    ServerDiagnosticsResult,
+    ServerRepairAction,
+    ServerRepairHistoryEntry,
+    ServerRepairResult,
+  } from '../services/api';
 
   // Custom Kick Icon (Kicking Person)
   const KickIcon = {
@@ -49,9 +57,18 @@
   const isAdmin = computed(() => authStore.isAdmin);
 
   const status = ref<ParsedServerStatus | null>(null);
+  const statusError = ref('');
+  const serverEndpoint = ref<{ available: boolean; port: number; service_name: string } | null>(null);
   const loading = ref(false);
   const autoRefresh = ref(false);
   let refreshInterval: number | null = null;
+
+  const diagnosticsOpen = ref(false);
+  const diagnosticsLoading = ref(false);
+  const diagnostics = ref<ServerDiagnosticsResult | null>(null);
+  const repairing = ref(false);
+  const repairResult = ref<ServerRepairResult | null>(null);
+  const repairHistory = ref<ServerRepairHistoryEntry[]>([]);
 
   const showMapModal = ref(false);
   const showDifficultyModal = ref(false);
@@ -59,12 +76,22 @@
   const showMaxPlayersModal = ref(false);
   const tempMaxPlayers = ref<number>();
   const savingMaxPlayers = ref(false);
+  const serverHost = window.location.hostname || '127.0.0.1';
+  const connectAddress = computed(() => {
+    const normalizedHost = serverHost.replace(/^\[|\]$/g, '');
+    const host = normalizedHost.includes(':') ? `[${normalizedHost}]` : normalizedHost;
+    return `${host}:${serverEndpoint.value?.port || 27015}`;
+  });
+  const connectCommand = computed(() => `connect ${connectAddress.value}`);
+  const steamConnectUrl = computed(() => `steam://connect/${connectAddress.value}`);
 
   const loadStatus = async () => {
     loading.value = true;
+    void loadServerEndpoint();
     try {
       const rawStatus = await api.getStatus();
       status.value = parseStatus(rawStatus);
+      statusError.value = '';
 
       // 更新页面标题
       if (status.value?.Hostname?.value) {
@@ -81,12 +108,69 @@
         });
       }
     } catch (e: any) {
-      message.error(e.message || '获取状态失败');
+      status.value = null;
+      statusError.value = e.message || '服务器暂时无法连接';
       if (autoRefresh.value) {
         toggleAutoRefresh();
       }
     } finally {
       loading.value = false;
+    }
+  };
+
+  const loadDiagnostics = async () => {
+    if (!isAdmin.value) {
+      message.warning('启动诊断仅管理员可用');
+      return;
+    }
+    diagnosticsLoading.value = true;
+    diagnosticsOpen.value = true;
+    void loadRepairHistory();
+    try {
+      diagnostics.value = await api.getServerDiagnostics();
+    } catch (e: any) {
+      diagnostics.value = {
+        available: false,
+        message: e.message || '获取启动诊断失败',
+        hints: [],
+        summary: '获取启动诊断失败',
+      };
+    } finally {
+      diagnosticsLoading.value = false;
+    }
+  };
+
+  const loadRepairHistory = async () => {
+    try {
+      repairHistory.value = await api.getServerRepairHistory(20);
+    } catch {
+      repairHistory.value = [];
+    }
+  };
+
+  const waitForServerRecovery = async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        const rawStatus = await api.getStatus();
+        status.value = parseStatus(rawStatus);
+        statusError.value = '';
+        message.success('服务器已恢复在线');
+        return;
+      } catch {
+        // keep polling until the deadline
+      }
+    }
+    message.error('服务器在 30 秒内没有恢复，正在收集启动诊断');
+    await loadDiagnostics();
+  };
+
+  const loadServerEndpoint = async () => {
+    try {
+      serverEndpoint.value = await api.getServerEndpoint();
+    } catch (error) {
+      console.error('Failed to load server endpoint:', error);
     }
   };
 
@@ -113,9 +197,77 @@
             toggleAutoRefresh();
           }
           await api.restartServer();
-          message.success('服务器重启指令已发送，请稍后手动刷新查看状态');
+          message.success('重启指令已发送，正在等待服务器恢复...');
+          void waitForServerRecovery();
         } catch (e: any) {
           message.error('重启失败: ' + e.message);
+        }
+      },
+    });
+  };
+
+  const repairServer = async (action: ServerRepairAction) => {
+    if (!isAdmin.value) {
+      message.warning('仅管理员可用');
+      return;
+    }
+    const restart = action === 'quarantine_and_restart';
+    const reload = action === 'quarantine_and_reload';
+    const killPort = action === 'kill_port_and_restart';
+    const serviceRestart = action === 'restart_service' || killPort;
+    Modal.confirm({
+      title: killPort
+        ? '终止端口占用进程并重启服务器？'
+        : serviceRestart
+          ? '重启游戏服务器？'
+          : restart
+            ? '隔离损坏 VPK 并重启服务器？'
+            : reload
+              ? '隔离损坏 VPK 并热重载？'
+              : '隔离损坏 VPK？',
+      icon: () => h(ExclamationCircleOutlined),
+      content: killPort
+        ? '会终止占用游戏端口的非 srcds 进程，然后重启服务器，所有玩家将断开。'
+        : serviceRestart
+          ? '仅重启 l4d2.service，所有玩家将断开。'
+          : restart
+            ? '坏文件会移动到 addons/.quarantine-时间戳/ 并清理引用，随后重启服务，所有玩家将断开。'
+            : reload
+              ? '坏文件会移动到 addons/.quarantine-时间戳/ 并清理引用，随后执行热重载（不重启、不踢人）。'
+              : '坏文件会移动到 addons/.quarantine-时间戳/ 并清理引用，不做热重载也不重启。',
+      okText: killPort
+        ? '终止并重启'
+        : serviceRestart
+          ? '确认重启'
+          : restart
+            ? '隔离并重启'
+            : reload
+              ? '隔离并热重载'
+              : '立即隔离',
+      okType: 'danger',
+      onOk: async () => {
+        if (autoRefresh.value) {
+          toggleAutoRefresh();
+        }
+        repairing.value = true;
+        try {
+          const result = await api.repairServerAddons(action);
+          repairResult.value = result;
+          if (result.status === 'timeout' || result.status === 'error') {
+            message.error(result.message || '处置失败');
+          } else if (result.status === 'partial') {
+            message.warning(result.message || '处置部分完成，请查看复检结果');
+          } else {
+            message.success(result.message || '处置完成');
+          }
+          await loadDiagnostics();
+          if ((restart || serviceRestart) && result.status !== 'error' && result.status !== 'timeout') {
+            void waitForServerRecovery();
+          }
+        } catch (e: any) {
+          message.error('处置失败: ' + e.message);
+        } finally {
+          repairing.value = false;
         }
       },
     });
@@ -204,6 +356,19 @@
     }
   };
 
+  const copyConnectCommand = async () => {
+    const success = await copyText(connectCommand.value);
+    if (success) {
+      message.success('已复制连接命令');
+    } else {
+      message.error('复制失败，请手动复制');
+    }
+  };
+
+  const joinServer = () => {
+    window.location.href = steamConnectUrl.value;
+  };
+
   const openIpQuery = (ip: string) => {
     if (!ip) return;
     const cleanIp = ip.split(':')[0];
@@ -261,7 +426,17 @@
           实时监控与管理您的 L4D2 服务器状态
         </p>
       </div>
-      <div class="flex gap-4">
+      <div class="flex flex-wrap gap-4">
+        <a-button
+          v-if="isAdmin"
+          size="large"
+          class="!rounded-lg !flex !items-center !justify-center"
+          :loading="diagnosticsLoading"
+          @click="loadDiagnostics"
+        >
+          <template #icon><ExclamationCircleOutlined /></template>
+          启动诊断
+        </a-button>
         <a-button
           @click="loadStatus"
           :loading="loading"
@@ -282,6 +457,19 @@
         </a-button>
       </div>
     </div>
+
+    <!-- Offline diagnostics -->
+    <a-alert v-if="statusError" type="error" show-icon class="rounded-xl">
+      <template #message>服务器暂时无法连接</template>
+      <template #description>
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <span class="break-all">{{ statusError }}</span>
+          <a-button v-if="isAdmin" size="small" danger @click="loadDiagnostics">
+            查看启动诊断
+          </a-button>
+        </div>
+      </template>
+    </a-alert>
 
     <!-- Status Stats - Compact Grid -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -363,6 +551,48 @@
         >
           <template #prefix><ThunderboltOutlined class="text-green-400 mr-2" /></template>
         </a-statistic>
+      </a-card>
+    </div>
+
+    <!-- Server Endpoint -->
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <a-card
+        class="!cursor-default h-full rounded-xl border-t-4 border-t-cyan-500 shadow-sm dark:bg-gray-800 dark:border-gray-700"
+        :body-style="{ padding: '16px', height: '100%' }"
+      >
+        <div class="flex h-full items-center justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-sm text-gray-500 dark:text-gray-400">服务器端口</div>
+            <div class="mt-1 font-mono text-2xl font-bold text-gray-900 dark:text-gray-100">
+              {{ serverEndpoint?.port || 27015 }}
+            </div>
+            <div class="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+              {{ connectAddress }}
+            </div>
+          </div>
+          <a-button type="primary" ghost class="shrink-0" @click="joinServer">
+            <template #icon><LoginOutlined /></template>
+            一键进服
+          </a-button>
+        </div>
+      </a-card>
+
+      <a-card
+        class="!cursor-default h-full rounded-xl border-t-4 border-t-amber-500 shadow-sm dark:bg-gray-800 dark:border-gray-700"
+        :body-style="{ padding: '16px', height: '100%' }"
+      >
+        <div class="flex h-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0">
+            <div class="text-sm text-gray-500 dark:text-gray-400">控制台连接</div>
+            <code class="mt-2 block break-all font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">
+              {{ connectCommand }}
+            </code>
+          </div>
+          <a-button type="primary" ghost class="shrink-0" @click="copyConnectCommand">
+            <template #icon><CopyOutlined /></template>
+            复制
+          </a-button>
+        </div>
       </a-card>
     </div>
 
@@ -709,6 +939,16 @@
     <MapSelectorModal v-model:open="showMapModal" />
     <DifficultyModal v-model:open="showDifficultyModal" />
     <GameModeModal v-model:open="showGameModeModal" @success="loadStatus" />
+    <ServerDiagnosticsModal
+      v-model:open="diagnosticsOpen"
+      :data="diagnostics"
+      :loading="diagnosticsLoading"
+      :repairing="repairing"
+      :repair-result="repairResult"
+      :history="repairHistory"
+      @refresh="loadDiagnostics"
+      @repair="repairServer"
+    />
 
     <a-modal
       v-model:open="showMaxPlayersModal"

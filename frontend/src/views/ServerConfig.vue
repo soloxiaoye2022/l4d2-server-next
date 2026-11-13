@@ -91,14 +91,24 @@
                 <template #prefix><SearchOutlined /></template>
               </a-input>
             </div>
-            <a-button
-              class="server-config-action-button w-full sm:w-auto"
-              :disabled="!isAdmin"
-              @click="openTextEditor"
-            >
-              <template #icon><FormOutlined /></template>
-              文本编辑
-            </a-button>
+            <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+              <a-button
+                class="server-config-action-button w-full sm:w-auto"
+                :disabled="!isAdmin"
+                @click="openCvarLibrary"
+              >
+                <template #icon><BookOutlined /></template>
+                参数库
+              </a-button>
+              <a-button
+                class="server-config-action-button w-full sm:w-auto"
+                :disabled="!isAdmin"
+                @click="openTextEditor"
+              >
+                <template #icon><FormOutlined /></template>
+                文本编辑
+              </a-button>
+            </div>
           </div>
 
           <a-alert
@@ -129,6 +139,19 @@
                     class="block rounded-md border border-gray-200 bg-white px-3 py-2 text-sm leading-6 text-emerald-700 whitespace-pre-wrap break-all dark:border-gray-800 dark:bg-black dark:text-emerald-300"
                     >{{ item.entry.command }}</code
                   >
+                  <CvarDefinitionDetails
+                    v-if="getCustomEntryDefinition(item.entry.command)"
+                    class="mt-3"
+                    :definition="getCustomEntryDefinition(item.entry.command)"
+                  />
+                  <div
+                    v-else
+                    class="mt-3 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs leading-5 text-gray-500 dark:border-gray-700 dark:text-gray-400"
+                  >
+                    这个命令暂未收录中文说明，仍会按原样写入 cfg。可先用参数库搜索，或在游戏控制台执行
+                    <code class="text-gray-700 dark:text-gray-300">help 命令名</code>
+                    查看服务器返回的帮助。
+                  </div>
                 </div>
               </div>
 
@@ -294,12 +317,86 @@
         <a-button type="primary" @click="applyEntryEditor">应用到页面</a-button>
       </template>
     </a-modal>
+
+    <a-modal
+      v-model:open="cvarLibraryOpen"
+      title="L4D2 / SourceMod 参数库"
+      width="min(1040px, 96vw)"
+      :footer="null"
+      destroy-on-close
+    >
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <a-input
+          v-model:value="cvarLibrarySearch"
+          allow-clear
+          class="min-w-0 flex-1"
+          placeholder="搜索参数名、中文说明或分类"
+        >
+          <template #prefix><SearchOutlined /></template>
+        </a-input>
+        <a-select v-model:value="cvarLibraryCategory" class="w-full sm:w-44">
+          <a-select-option v-for="category in cvarLibraryCategories" :key="category" :value="category">
+            {{ category }}
+          </a-select-option>
+        </a-select>
+      </div>
+
+      <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(260px,0.78fr)_minmax(0,1.22fr)]">
+        <div class="flex max-h-[62vh] min-h-[300px] flex-col overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+          <div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            <span>匹配到 {{ filteredCvarCatalog.length }} 项</span>
+            <span>点击查看完整说明</span>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto p-2">
+            <button
+              v-for="definition in filteredCvarCatalog"
+              :key="definition.name"
+              type="button"
+              :class="[
+                'mb-2 w-full rounded-md border px-3 py-2 text-left transition-colors',
+                selectedLibraryCvar?.name === definition.name
+                  ? 'border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/30'
+                  : 'border-transparent hover:border-gray-200 hover:bg-gray-50 dark:hover:border-gray-700 dark:hover:bg-gray-900',
+              ]"
+              @click="selectedLibraryCvar = definition"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ definition.displayName }}</span>
+                <a-tag class="m-0">{{ definition.category }}</a-tag>
+              </div>
+              <code class="mt-1 block break-all text-xs text-sky-700 dark:text-sky-300">{{ definition.name }}</code>
+              <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                {{ definition.description }}
+              </p>
+            </button>
+            <a-empty v-if="filteredCvarCatalog.length === 0" description="没有匹配的参数" />
+          </div>
+        </div>
+
+        <div class="flex min-h-[300px] flex-col">
+          <CvarDefinitionDetails v-if="selectedLibraryCvar" :definition="selectedLibraryCvar" />
+          <div v-else class="flex flex-1 items-center justify-center rounded-lg border border-dashed border-gray-300 text-sm text-gray-500 dark:border-gray-700">
+            从左侧选择一个参数查看说明
+          </div>
+          <div v-if="selectedLibraryCvar" class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
+            <p class="text-xs leading-5 text-gray-500 dark:text-gray-400">
+              添加后仍可在参数行中直接修改值；保存配置后会写入服务器 cfg。
+            </p>
+            <a-button type="primary" @click="addCatalogEntry(selectedLibraryCvar)">
+              <template #icon><PlusOutlined /></template>
+              添加到自定义参数
+            </a-button>
+          </div>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
   import { computed, onMounted, reactive, ref } from 'vue';
   import {
+    BookOutlined,
     DeleteOutlined,
     EditOutlined,
     FileTextOutlined,
@@ -310,12 +407,20 @@
   import { message } from 'ant-design-vue';
   import { api } from '../services/api';
   import { useAuthStore } from '../stores/auth';
+  import CvarDefinitionDetails from '../components/settings/CvarDefinitionDetails.vue';
   import {
     parseCustomConfigLines,
     parseCustomConfigText,
     serializeCustomConfigEntries,
     type CustomConfigEntry,
   } from '../utils/serverConfig';
+  import {
+    findCvarDefinitionForCommand,
+    l4d2CvarCatalog,
+    parseCvarCommand,
+    type CvarCategory,
+    type L4D2CvarDefinition,
+  } from '../data/l4d2Cvars';
 
   const authStore = useAuthStore();
   const isAdmin = computed(() => authStore.isAdmin);
@@ -327,10 +432,37 @@
 
   const customEntries = ref<CustomConfigEntry[]>([]);
   const customSearch = ref('');
+  const cvarLibraryOpen = ref(false);
+  const cvarLibrarySearch = ref('');
+  const cvarLibraryCategory = ref<'全部' | CvarCategory>('全部');
+  const selectedLibraryCvar = ref<L4D2CvarDefinition | null>(null);
   const customTextSource = ref('');
   const trailingComments = ref<string[]>([]);
   const trailingStartLine = ref(0);
   const hasTrailingComments = computed(() => trailingComments.value.length > 0);
+  const cvarLibraryCategories = computed<Array<'全部' | CvarCategory>>(() => [
+    '全部',
+    ...Array.from(new Set(l4d2CvarCatalog.map((definition) => definition.category))),
+  ]);
+  const filteredCvarCatalog = computed(() => {
+    const query = cvarLibrarySearch.value.trim().toLocaleLowerCase();
+    return l4d2CvarCatalog.filter((definition) => {
+      if (cvarLibraryCategory.value !== '全部' && definition.category !== cvarLibraryCategory.value) {
+        return false;
+      }
+      if (!query) return true;
+      return [definition.name, definition.displayName, definition.description, definition.category]
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(query);
+    });
+  });
+  const openCvarLibrary = () => {
+    if (!selectedLibraryCvar.value) {
+      selectedLibraryCvar.value = filteredCvarCatalog.value[0] ?? null;
+    }
+    cvarLibraryOpen.value = true;
+  };
   const filteredCustomEntries = computed(() => {
     const query = customSearch.value.trim().toLocaleLowerCase();
     return customEntries.value
@@ -341,6 +473,25 @@
         return entry.comments.some((comment) => comment.toLocaleLowerCase().includes(query));
       });
   });
+  const getCustomEntryDefinition = (command: string) => findCvarDefinitionForCommand(command);
+  const addCatalogEntry = (definition: L4D2CvarDefinition) => {
+    if (!isAdmin.value) return;
+    const parsed = parseCvarCommand(definition.exampleCommand);
+    const alreadyAdded = parsed
+      ? customEntries.value.some((entry) => parseCvarCommand(entry.command)?.name === parsed.name)
+      : false;
+    if (alreadyAdded) {
+      message.info(`${definition.name} 已经在自定义参数中`);
+      return;
+    }
+    customEntries.value.push({
+      id: `catalog-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      comments: [`参数：${definition.displayName}`, `说明：${definition.description}`, `来源：${definition.source}`],
+      command: definition.exampleCommand,
+    });
+    cvarLibraryOpen.value = false;
+    message.success(`已添加 ${definition.name}，请按需修改数值后保存`);
+  };
   const trailingCommentMessage = computed(
     () =>
       `自定义配置从第 ${trailingStartLine.value} 行开始有 ${trailingComments.value.length} 行注释没有对应指令。请使用“文本编辑”补充指令或删除这些注释。`

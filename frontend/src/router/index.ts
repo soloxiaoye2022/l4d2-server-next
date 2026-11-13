@@ -13,6 +13,8 @@ const PlayerStats = () => import('../views/PlayerStats.vue');
 const Admins = () => import('../views/Admins.vue');
 const ServerInfo = () => import('../views/ServerInfo.vue');
 const ServerConfig = () => import('../views/ServerConfig.vue');
+const ServerStartup = () => import('../views/ServerStartup.vue');
+const ServerMaintenance = () => import('../views/ServerMaintenance.vue');
 const Backup = () => import('../views/Backup.vue');
 const Logs = () => import('../views/Logs.vue');
 const Audit = () => import('../views/Audit.vue');
@@ -94,6 +96,18 @@ const router = createRouter({
           path: 'server-config',
           name: 'ServerConfig',
           component: ServerConfig,
+        },
+        {
+          path: 'server-startup',
+          name: 'ServerStartup',
+          component: ServerStartup,
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'server-maintenance',
+          name: 'ServerMaintenance',
+          component: ServerMaintenance,
+          meta: { requiresAdmin: true },
         },
         {
           path: 'backup',

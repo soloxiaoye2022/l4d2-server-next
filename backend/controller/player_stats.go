@@ -486,7 +486,7 @@ func SearchPlayerStatsPlayers(c *gin.Context) {
 		}
 		results = append(results, PlayerResult{
 			SteamID:          candidate.SteamID,
-			Name:             latest.Name,
+			Name:             logic.DisplayPlayerName(latest.Name),
 			Location:         latest.Location,
 			IP:               latest.IP,
 			LastSeen:         candidate.LastSeen,
@@ -561,7 +561,7 @@ func GetPlayerStatsPlayerDays(c *gin.Context) {
 		day.OnlineMinutes += playerStatsIntervalMinutes
 		day.LastSeen = sample.Timestamp
 
-		name := strings.TrimSpace(sample.Name)
+		name := logic.SanitizePlayerName(strings.TrimSpace(sample.Name))
 		if name == "" {
 			name = "Unknown"
 		}
@@ -592,6 +592,9 @@ func GetPlayerStatsPlayerDays(c *gin.Context) {
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		FailWithError(c, http.StatusInternalServerError, "查询玩家信息失败: %v", err)
 		return
+	}
+	if latest.ID != 0 {
+		latest.Name = logic.DisplayPlayerName(latest.Name)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

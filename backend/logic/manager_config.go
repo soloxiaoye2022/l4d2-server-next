@@ -25,6 +25,7 @@ type ManagerConfig struct {
 	MapImportPolicy      MapImportPolicy `json:"map_import_policy"`
 	MapHotReloadCommand  string          `json:"map_hot_reload_command"`
 	SteamCDNIP           string          `json:"steam_cdn_ip,omitempty"`
+	SteamAPIKey          string          `json:"steam_api_key,omitempty"`
 	// DiskUsageLimitPercent 是地图上传与下载任务允许的磁盘使用率上限。
 	DiskUsageLimitPercent int `json:"disk_usage_limit_percent"`
 }
@@ -90,10 +91,8 @@ func saveManagerConfig() error {
 		return err
 	}
 	defer os.Remove(temporary.Name())
-	mode := os.FileMode(0644)
-	if info, err := os.Stat(consts.ManagerConfigPath); err == nil {
-		mode = info.Mode().Perm()
-	}
+	// manager_config.json can contain the Steam API key.
+	mode := os.FileMode(0600)
 	if err = temporary.Chmod(mode); err == nil {
 		_, err = temporary.Write(data)
 	}
@@ -113,7 +112,10 @@ func saveManagerConfig() error {
 func GetSelfServiceConfig() ManagerConfig {
 	managerConfigMutex.RLock()
 	defer managerConfigMutex.RUnlock()
-	return *managerConfig
+	config := *managerConfig
+	// Steam API keys are exposed only through the dedicated masked status API.
+	config.SteamAPIKey = ""
+	return config
 }
 
 func SetSelfServiceEnable(enable bool) error {
@@ -236,4 +238,80 @@ func SetSteamCDNIP(value string) (string, error) {
 	defer managerConfigMutex.Unlock()
 	managerConfig.SteamCDNIP = normalized
 	return normalized, saveManagerConfig()
+}
+
+type SteamAPIKeyStatus struct {
+	Configured bool   `json:"configured"`
+	Source     string `json:"source"`
+	MaskedKey  string `json:"masked_key"`
+}
+
+func NormalizeSteamAPIKey(value string) (string, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return "", nil
+	}
+	if len(normalized) != 32 {
+		return "", fmt.Errorf("Steam API Key 必须为 32 位十六进制字符")
+	}
+	for _, char := range normalized {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return "", fmt.Errorf("Steam API Key 只能包含 0-9 和 A-F")
+		}
+	}
+	return normalized, nil
+}
+
+func maskSecret(value string) string {
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 8 {
+		return "********"
+	}
+	return value[:4] + "..." + value[len(value)-4:]
+}
+
+func GetSteamAPIKey() string {
+	if value := strings.TrimSpace(os.Getenv("STEAM_API_KEY")); value != "" {
+		return value
+	}
+	managerConfigMutex.RLock()
+	defer managerConfigMutex.RUnlock()
+	if managerConfig == nil {
+		return ""
+	}
+	return strings.TrimSpace(managerConfig.SteamAPIKey)
+}
+
+func GetSteamAPIKeyStatus() SteamAPIKeyStatus {
+	if value := strings.TrimSpace(os.Getenv("STEAM_API_KEY")); value != "" {
+		return SteamAPIKeyStatus{Configured: true, Source: "environment", MaskedKey: maskSecret(value)}
+	}
+	managerConfigMutex.RLock()
+	defer managerConfigMutex.RUnlock()
+	if managerConfig == nil || managerConfig.SteamAPIKey == "" {
+		return SteamAPIKeyStatus{Source: "none"}
+	}
+	return SteamAPIKeyStatus{
+		Configured: true,
+		Source:     "panel",
+		MaskedKey:  maskSecret(managerConfig.SteamAPIKey),
+	}
+}
+
+func SetSteamAPIKey(value string) (string, error) {
+	normalized, err := NormalizeSteamAPIKey(value)
+	if err != nil {
+		return "", err
+	}
+	managerConfigMutex.Lock()
+	defer managerConfigMutex.Unlock()
+	previous := managerConfig.SteamAPIKey
+	managerConfig.SteamAPIKey = normalized
+	if err := saveManagerConfig(); err != nil {
+		managerConfig.SteamAPIKey = previous
+		return "", err
+	}
+	return normalized, nil
 }

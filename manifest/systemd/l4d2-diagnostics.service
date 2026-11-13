@@ -1,0 +1,6 @@
+[Unit]
+Description=Run L4D2 Manager server diagnostics
+
+[Service]
+Type=oneshot
+ExecStart=/opt/l4d2-manager/diagnose-server.sh

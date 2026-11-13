@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for L4D2 Manager diagnostics requests
+
+[Path]
+PathChanged=/opt/l4d2-manager/control/diagnostics-request.json
+Unit=l4d2-diagnostics.service
+
+[Install]
+WantedBy=paths.target

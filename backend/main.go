@@ -183,9 +183,36 @@ func main() {
 	playerStats := router.Group("/player-stats", middlewares.Auth())
 	{
 		playerStats.POST("/config", controller.GetPlayerStatsConfig)
+		playerStats.POST("/steam-api-key", controller.GetSteamAPIKeySetting)
+		playerStats.POST("/steam-api-key/update", controller.UpdateSteamAPIKeySetting)
 		playerStats.POST("/hourly", controller.GetPlayerStatsHourly)
 		playerStats.POST("/players/search", controller.SearchPlayerStatsPlayers)
 		playerStats.POST("/player-days", controller.GetPlayerStatsPlayerDays)
+	}
+
+	// Server Startup Group
+	serverStartup := router.Group("/server-startup", middlewares.Auth())
+	{
+		serverStartup.POST("/endpoint", controller.GetServerEndpoint)
+		serverStartup.POST("/diagnostics", controller.GetServerDiagnostics)
+		serverStartup.POST("/repair", controller.PostServerRepair)
+		serverStartup.POST("/repair/history", controller.GetServerRepairHistory)
+		serverStartup.POST("/get", controller.GetServerStartup)
+		serverStartup.POST("/update", controller.UpdateServerStartup)
+		serverStartup.POST("/sourcetv/status", controller.GetSourceTVSupport)
+		serverStartup.POST("/sourcetv/install", controller.InstallSourceTVSupport)
+		serverStartup.POST("/steamcmd/status", controller.GetSteamCMDUpdate)
+		serverStartup.POST("/steamcmd/generate", controller.GenerateSteamCMDUpdate)
+	}
+
+	serverMaintenance := router.Group("/server-maintenance", middlewares.Auth())
+	{
+		serverMaintenance.POST("/status", controller.GetServerMaintenance)
+		serverMaintenance.POST("/update/check", controller.CheckL4D2ServerUpdate)
+		serverMaintenance.POST("/update/apply", controller.UpdateL4D2Server)
+		serverMaintenance.POST("/sourcetv/status", controller.GetSourceTVSupport)
+		serverMaintenance.POST("/sourcetv/install", controller.InstallSourceTVSupport)
+		serverMaintenance.POST("/sourcetv/configure", controller.ConfigureSourceTVStartup)
 	}
 
 	// Server Info Group

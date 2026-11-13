@@ -4,13 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-
-	"l4d2-manager-next/pkg/rcon"
 )
 
 const (
@@ -245,17 +242,9 @@ func normalizeSteamID(value string) (string, string, error) {
 }
 
 func defaultGameBanRCONDialer() (gameBanRCONSession, error) {
-	url := strings.TrimSpace(os.Getenv("L4D2_RCON_URL"))
-	if url == "" {
-		return nil, fmt.Errorf("%w: 服务端未配置 RCON 地址", ErrGameBanRCONUnavailable)
-	}
-	password := os.Getenv("L4D2_RCON_PASSWORD")
-	if password == "" {
-		return nil, fmt.Errorf("%w: 服务端未配置 RCON 密码", ErrGameBanRCONUnavailable)
-	}
-	connection, err := rcon.Dial(url, password)
+	connection, err := DialRconConnection()
 	if err != nil {
-		return nil, fmt.Errorf("%w: RCON 连接失败: %v", ErrGameBanRCONUnavailable, err)
+		return nil, fmt.Errorf("%w: %v", ErrGameBanRCONUnavailable, err)
 	}
 	return connection, nil
 }
