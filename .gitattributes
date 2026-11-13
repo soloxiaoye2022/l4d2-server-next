@@ -1,0 +1,41 @@
+# 统一换行策略：仓库内一律使用 LF，避免 Windows/Linux 交叉构建时脚本被注入 CRLF
+* text=auto eol=lf
+
+# Shell / systemd 脚本必须保持 LF，CRLF 会导致 Linux 上 exec 失败
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.path          text eol=lf
+*.service       text eol=lf
+*.target        text eol=lf
+*.timer         text eol=lf
+*.conf          text eol=lf
+
+# Go / 前端源码与配置
+*.go            text eol=lf
+*.mod           text eol=lf
+*.sum           text eol=lf
+*.ts            text eol=lf
+*.tsx           text eol=lf
+*.js            text eol=lf
+*.cjs           text eol=lf
+*.vue           text eol=lf
+*.json          text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.css           text eol=lf
+*.md            text eol=lf
+*.txt           text eol=lf
+*.cfg           text eol=lf
+*.nut           text eol=lf
+
+# 构建产物与二进制按原样处理，不做换行转换
+/backend/static/**     -text
+*.png                  binary
+*.jpg                  binary
+*.ico                  binary
+*.xdb                  binary
+
+# Windows 批处理必须是 CRLF
+*.bat                  text eol=crlf
+*.cmd                  text eol=crlf
+*.ps1                  text eol=crlf
