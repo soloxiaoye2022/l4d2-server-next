@@ -4,7 +4,7 @@
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">启动项管理</h1>
         <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-          管理 L4D2 服务端启动参数与 systemd 服务定义
+          管理 L4D2 服务端启动参数与{{ platform.startupConfigLabel }}
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -39,8 +39,16 @@
         v-if="!config.available"
         type="warning"
         show-icon
-        message="当前部署未提供可编辑的 systemd 启动项文件"
-        description="请确认服务单元快照已挂载到 /control/l4d2.service。"
+        :message="
+          platform.hasSystemd
+            ? '当前部署未提供可编辑的 systemd 启动项文件'
+            : '当前平台未找到可编辑的启动脚本'
+        "
+        :description="
+          platform.hasSystemd
+            ? '请确认服务单元快照已挂载到 /control/l4d2.service。'
+            : `请确认启动脚本位于 ${platform.capabilities.default_control_dir}，或通过 L4D2_STARTUP_UNIT_PATH 指定路径。`
+        "
       />
 
       <template v-else>
@@ -74,7 +82,7 @@
                   </span>
                 </h2>
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  /etc/systemd/system/{{ config.service_name }}
+                  {{ platform.startupConfigPathLabel }}{{ config.service_name }}
                 </p>
               </div>
             </div>
@@ -87,7 +95,7 @@
               <a-input
                 v-model:value="workingDirectory"
                 class="font-mono"
-                placeholder="/home/ubuntu/steamcmd/l4d2"
+                :placeholder="platform.gamePathPlaceholder"
               />
             </label>
             <label class="startup-field">
@@ -95,7 +103,7 @@
               <a-input
                 v-model:value="executable"
                 class="font-mono"
-                placeholder="/home/ubuntu/steamcmd/l4d2/srcds_run"
+                :placeholder="platform.execStartPlaceholder"
               />
             </label>
           </div>
@@ -141,7 +149,7 @@
             <div class="min-w-0 flex-1">
               <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">启动参数</h2>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                中文注释会随参数写入 systemd 服务定义
+                中文注释会随参数写入{{ platform.startupConfigLabel }}
               </p>
             </div>
             <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -475,7 +483,7 @@
         type="info"
         show-icon
         message="应用到页面草稿"
-        description="这里编辑完整的 ExecStart 命令行。应用后仍需点击“保存并重载”才会写入 systemd。"
+        :description="`这里编辑完整的 ExecStart 命令行。应用后仍需点击“保存并重载”才会写入${platform.startupConfigLabel}。`"
       />
       <a-alert
         v-if="textEditorError"
@@ -542,6 +550,7 @@
   } from '../utils/startupOptions';
   import { api, type ServerStartupConfig } from '../services/api';
   import { copyToClipboard } from '../utils/clipboard';
+  import { usePlatformStore } from '../stores/platform';
 
   interface StartupDraftSnapshot {
     workingDirectory: string;
@@ -550,6 +559,7 @@
     comments: string[];
   }
 
+  const platform = usePlatformStore();
   const loading = ref(true);
   const saving = ref(false);
   const restarting = ref(false);
@@ -649,7 +659,7 @@
   const reloadStatusLabel = computed(() => {
     switch (config.value?.reload_status) {
       case 'success':
-        return 'systemd 已重载';
+        return platform.hasSystemd ? 'systemd 已重载' : '已保存';
       case 'pending':
         return '等待重载';
       case 'error':
@@ -681,10 +691,14 @@
   });
   const reloadDescription = computed(() => {
     if (config.value?.reload_status === 'success') {
-      return '启动项已写入 systemd，重启游戏服后生效。';
+      return platform.hasSystemd
+        ? '启动项已写入 systemd，重启游戏服后生效。'
+        : '启动项已保存到启动脚本，重启游戏服后生效。';
     }
     if (config.value?.reload_status === 'error') {
-      return '系统未应用新的服务定义，请检查宿主机 systemd 状态。';
+      return platform.hasSystemd
+        ? '系统未应用新的服务定义，请检查宿主机 systemd 状态。'
+        : '系统未应用新的启动脚本，请检查文件权限。';
     }
     return '宿主机正在应用新的服务定义。';
   });
@@ -873,7 +887,7 @@
     executable.value = parsed.executable;
     entries.value = parsed.entries;
     textEditorOpen.value = false;
-    message.info('已应用到页面，请点击“保存并重载”写入 systemd');
+    message.info(`已应用到页面，请点击“保存并重载”写入${platform.startupConfigLabel}`);
   };
 
   const resetForm = () => {
@@ -904,9 +918,13 @@
       config.value = updated;
       const result = await waitForReload(updated);
       if (result.reload_status === 'error') {
-        message.error(result.reload_message || 'systemd 重载失败');
+        message.error(result.reload_message || '重载失败');
       } else {
-        message.success('启动项已保存，systemd 服务定义已重载');
+        message.success(
+          platform.hasSystemd
+            ? '启动项已保存，systemd 服务定义已重载'
+            : '启动项已保存到启动脚本'
+        );
       }
     } catch (error: any) {
       message.error(error.message || '启动项保存失败');
@@ -919,8 +937,9 @@
     Modal.confirm({
       title: '确认修改服务器启动项？',
       icon: () => h(ExclamationCircleOutlined),
-      content:
-        '保存后会写入 systemd 服务定义和中文注释，并自动执行 daemon-reload。当前游戏服不会自动重启。',
+      content: platform.hasSystemd
+        ? '保存后会写入 systemd 服务定义和中文注释，并自动执行 daemon-reload。当前游戏服不会自动重启。'
+        : '保存后会写入启动脚本和中文注释。当前游戏服不会自动重启，需要重启后生效。',
       okText: '保存并重载',
       onOk: save,
     });

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"l4d2-manager-next/consts"
 	"l4d2-manager-next/controller"
 	"l4d2-manager-next/db"
@@ -73,14 +74,29 @@ func main() {
 		c.Next()
 	})
 
-	// 如果maplist.txt不存在，创建一个空的
+	// 先恢复未完成的地图事务，再读取或创建 maplist 快照。
+	// 已 prepare 的操作可能需要恢复或删除这个文件。
+	lifecycleErr := logic.RecoverMapLifecycle()
+	if lifecycleErr != nil {
+		log.Printf("map lifecycle initialization: %v", lifecycleErr)
+	}
+	// 只有在恢复成功后才初始化缺失的 maplist。恢复失败必须保留文件和
+	// journal，等待管理员介入。
 	mapListPath := filepath.Join(consts.MapListFilePath)
-	if _, err := os.Stat(mapListPath); os.IsNotExist(err) {
-		err := os.WriteFile(mapListPath, []byte(""), 0755)
-		if err != nil {
-			panic("创建maplist.txt失败")
+	if lifecycleErr == nil {
+		if _, err := os.Stat(mapListPath); os.IsNotExist(err) {
+			err := os.WriteFile(mapListPath, []byte(""), 0755)
+			if err != nil {
+				// 不在这里 panic。游戏目录缺失或不可写是配置问题，
+				// 直接退出会让用户连面板都打不开、没法改路径。
+				log.Printf("创建 maplist.txt 失败（游戏目录可能未配置或不可写）: %v", err)
+			}
 		}
 	}
+
+	cleanupContext, stopMapCleanup := context.WithCancel(context.Background())
+	defer stopMapCleanup()
+	logic.StartMapCleanup(cleanupContext)
 
 	router.MaxMultipartMemory = 1 << 25 // 限制表单内存缓存为32M
 
@@ -104,6 +120,8 @@ func main() {
 	router.POST("/config/vpk-trim", middlewares.Auth(), controller.SetVPKTrimConfig)
 	router.POST("/maps/import-policy", middlewares.Auth(), controller.GetMapImportPolicy)
 	router.POST("/config/map-import-policy", middlewares.Auth(), controller.SetMapImportPolicy)
+	router.POST("/maps/cleanup/config", middlewares.Auth(), controller.GetMapCleanupConfig)
+	router.POST("/config/map-cleanup", middlewares.Auth(), controller.SetMapCleanupConfig)
 	router.POST("/disk-usage/config", middlewares.Auth(), controller.GetDiskUsageConfig)
 	router.POST("/config/disk-usage", middlewares.Auth(), controller.SetDiskUsageConfig)
 
@@ -116,6 +134,9 @@ func main() {
 	router.POST("/restart", middlewares.Auth(), controller.Restart)
 	router.POST("/clear", middlewares.Auth(), controller.Clear)
 	router.POST("/list", middlewares.Auth(), controller.List)
+	router.POST("/maps/list", middlewares.Auth(), controller.ListMapLifecycle)
+	router.POST("/maps/lock", middlewares.Auth(), controller.SetMapLocked)
+	router.POST("/maps/remove-batch", middlewares.Auth(), controller.RemoveMapsBatch)
 	router.POST("/maps/hot-reload", middlewares.Auth(), controller.HotReloadMaps)
 	router.POST("/maps/hot-reload/status", middlewares.Auth(), controller.GetMapHotReloadStatus)
 	router.POST("/maps/hot-reload/config", middlewares.Auth(), controller.GetMapHotReloadConfig)
@@ -143,6 +164,7 @@ func main() {
 	router.POST("/rename", middlewares.Auth(), controller.RenameMap)
 	router.POST("/getUserPlaytime", middlewares.Auth(), controller.GetUserPlaytime)
 	router.POST("/getVersion", controller.GetVersion) // Public
+	router.GET("/platform", controller.GetPlatform)   // Public
 
 	// RCON Group
 	rcon := router.Group("/rcon", middlewares.Auth())

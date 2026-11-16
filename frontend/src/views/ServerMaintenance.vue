@@ -121,7 +121,11 @@
               type="warning"
               show-icon
               message="更新会中断在线玩家"
-              description="立即更新会先停止 l4d2.service，执行 SteamCMD，更新完成后重新启动游戏服。请提前通知玩家。"
+              :description="
+                platform.hasSystemd
+                  ? '立即更新会先停止 l4d2.service，执行 SteamCMD，更新完成后重新启动游戏服。请提前通知玩家。'
+                  : '当前平台没有宿主机维护脚本，面板只能生成 SteamCMD 更新脚本，需要你手动执行并重启游戏服。'
+              "
             />
           </div>
         </div>
@@ -239,6 +243,9 @@
     type ServerMaintenanceStatus,
     type SourceTVSupportStatus,
   } from '../services/api';
+  import { usePlatformStore } from '../stores/platform';
+
+  const platform = usePlatformStore();
 
   const router = useRouter();
   const loading = ref(true);

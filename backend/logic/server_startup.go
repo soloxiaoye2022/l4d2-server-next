@@ -25,6 +25,20 @@ const (
 
 var systemdServiceNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.@:-]+\.service$`)
 
+// startupFormatOverride lets tests pin the startup file format regardless of
+// the host OS. Production code leaves it nil and follows the real platform, but
+// the systemd parser tests must run on Windows CI too.
+var startupFormatOverride *bool
+
+// usesBatchStartup reports whether the startup definition is a batch launcher
+// instead of a systemd unit.
+func usesBatchStartup() bool {
+	if startupFormatOverride != nil {
+		return *startupFormatOverride
+	}
+	return IsWindows()
+}
+
 type ServerStartupConfig struct {
 	Available               bool     `json:"available"`
 	ServiceName             string   `json:"service_name"`
@@ -66,6 +80,11 @@ func serverStartupUnitPath() string {
 			return path
 		}
 	}
+	if IsWindows() {
+		// Windows has no systemd unit. The startup source is the batch launcher,
+		// so point at it instead of a Unix path that can never exist.
+		return filepath.Join(DefaultControlDir(), "l4d2.bat")
+	}
 	for _, path := range []string{
 		"/control/l4d2.service",
 		"/etc/systemd/system/l4d2.service",
@@ -88,12 +107,21 @@ func serverStartupReloadTrigger() string {
 	if path := strings.TrimSpace(os.Getenv("L4D2_STARTUP_RELOAD_TRIGGER")); path != "" {
 		return path
 	}
+	if IsWindows() {
+		// No systemd reload channel on Windows; returning empty makes
+		// triggerStartupReload report "restart required" instead of writing
+		// into a directory that does not exist.
+		return ""
+	}
 	return "/control/systemd-reload"
 }
 
 func serverStartupResultPath() string {
 	if path := strings.TrimSpace(os.Getenv("L4D2_STARTUP_RESULT_PATH")); path != "" {
 		return path
+	}
+	if IsWindows() {
+		return filepath.Join(DefaultControlDir(), "l4d2-startup-result.json")
 	}
 	return "/control/l4d2-startup-result.json"
 }
@@ -115,7 +143,8 @@ func GetServerStartupConfig() (ServerStartupConfig, error) {
 		return cfg, fmt.Errorf("systemd 服务名无效")
 	}
 
-	content, err := os.ReadFile(serverStartupUnitPath())
+	unitPath := serverStartupUnitPath()
+	content, err := os.ReadFile(unitPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			cfg.ReloadStatus = "unavailable"
@@ -124,7 +153,13 @@ func GetServerStartupConfig() (ServerStartupConfig, error) {
 		return cfg, fmt.Errorf("读取启动项文件失败: %w", err)
 	}
 
-	comments, workingDirectory, execStart, err := parseSystemdStartupUnit(string(content))
+	var comments []string
+	var workingDirectory, execStart string
+	if usesBatchStartup() {
+		comments, workingDirectory, execStart, err = parseBatchStartup(string(content))
+	} else {
+		comments, workingDirectory, execStart, err = parseSystemdStartupUnit(string(content))
+	}
 	if err != nil {
 		return cfg, err
 	}
@@ -153,7 +188,12 @@ func GetServerEndpoint() ServerStartupFileState {
 		}
 		return state
 	}
-	_, _, execStart, err := parseSystemdStartupUnit(string(content))
+	var execStart string
+	if usesBatchStartup() {
+		_, _, execStart, err = parseBatchStartup(string(content))
+	} else {
+		_, _, execStart, err = parseSystemdStartupUnit(string(content))
+	}
 	if err != nil {
 		return state
 	}
@@ -179,13 +219,24 @@ func UpdateServerStartup(request UpdateServerStartupRequest) (ServerStartupConfi
 	unitPath := serverStartupUnitPath()
 	content, err := os.ReadFile(unitPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if !errors.Is(err, os.ErrNotExist) {
+			return ServerStartupConfig{}, fmt.Errorf("读取启动项文件失败: %w", err)
+		}
+		// Windows has no packaged unit file, so the first save creates the
+		// launcher. Linux keeps the original "cannot edit a missing unit"
+		// behaviour because the host installs that file.
+		if !usesBatchStartup() {
 			return ServerStartupConfig{}, fmt.Errorf("启动项文件不存在，无法编辑")
 		}
-		return ServerStartupConfig{}, fmt.Errorf("读取启动项文件失败: %w", err)
+		content = []byte(batchStartupTemplate(workingDirectory, execStart, comments))
 	}
 
-	updated, err := updateSystemdStartupUnit(string(content), workingDirectory, execStart, comments)
+	var updated string
+	if usesBatchStartup() {
+		updated, err = updateBatchStartup(string(content), workingDirectory, execStart, comments)
+	} else {
+		updated, err = updateSystemdStartupUnit(string(content), workingDirectory, execStart, comments)
+	}
 	if err != nil {
 		return ServerStartupConfig{}, err
 	}
@@ -402,7 +453,10 @@ func normalizeSystemdWorkingDirectory(value string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("工作目录不能为空")
 	}
-	if !strings.HasPrefix(value, "/") || path.Clean(value) != value {
+	if !isAbsolutePathForPlatform(value) || !isCleanPathForStyle(value) {
+		if IsWindows() {
+			return "", fmt.Errorf("工作目录必须是规范化的绝对路径，例如 D:\\SteamCMD\\l4d2")
+		}
 		return "", fmt.Errorf("工作目录必须是规范化的绝对路径")
 	}
 	if utf8.RuneCountInString(value) > 1024 {
@@ -412,6 +466,53 @@ func normalizeSystemdWorkingDirectory(value string) (string, error) {
 		return "", fmt.Errorf("工作目录不能包含换行或空字符")
 	}
 	return value, nil
+}
+
+// isCleanPathForStyle checks that the path has no redundant separators, "." or
+// ".." segments. The path style decides the normaliser: POSIX paths keep "/"
+// even on Windows hosts, because a container-managed unit file may legitimately
+// carry Linux paths while the panel runs on a Windows workstation.
+func isCleanPathForStyle(value string) bool {
+	if strings.HasPrefix(value, "/") {
+		return path.Clean(value) == value
+	}
+	return filepath.Clean(value) == value
+}
+
+// dirOfPathStyle returns the parent directory without changing the path style.
+// filepath.Dir rewrites "/home/ubuntu/steamcmd/l4d2" to "\home\ubuntu\steamcmd"
+// on Windows, which then fails absolute-path validation.
+func dirOfPathStyle(value string) string {
+	if strings.HasPrefix(value, "/") {
+		return path.Dir(value)
+	}
+	return filepath.Dir(value)
+}
+
+// joinPathStyle joins path segments using the separator style of the base path,
+// so a POSIX install directory stays POSIX even when the panel runs on Windows.
+func joinPathStyle(base string, elems ...string) string {
+	if strings.HasPrefix(base, "/") {
+		parts := append([]string{base}, elems...)
+		return path.Join(parts...)
+	}
+	parts := append([]string{base}, elems...)
+	return filepath.Join(parts...)
+}
+
+// isAbsolutePathForPlatform accepts POSIX paths and Windows drive/UNC paths on
+// both platforms. filepath.IsAbs alone cannot be used: on Windows it rejects
+// "/home/ubuntu/steamcmd/l4d2", which is still a valid absolute path for a
+// container-managed config, and on Linux it rejects "D:\SteamCMD\l4d2".
+// Tests and shared fixtures rely on both forms being accepted.
+func isAbsolutePathForPlatform(value string) bool {
+	if strings.HasPrefix(value, "/") {
+		return true
+	}
+	if len(value) >= 3 && value[1] == ':' && (value[2] == '\\' || value[2] == '/') {
+		return true
+	}
+	return strings.HasPrefix(value, `\\`)
 }
 
 func normalizeSystemdExecStart(value string) (string, error) {
@@ -431,7 +532,10 @@ func normalizeSystemdExecStart(value string) (string, error) {
 	}
 	executable := strings.TrimPrefix(firstField[0], "-")
 	executable = strings.TrimPrefix(executable, "@")
-	if !strings.HasPrefix(executable, "/") {
+	if !isAbsolutePathForPlatform(executable) {
+		if IsWindows() {
+			return "", fmt.Errorf("启动命令必须使用绝对路径，例如 D:\\SteamCMD\\l4d2\\srcds.exe")
+		}
 		return "", fmt.Errorf("启动命令必须使用绝对路径")
 	}
 	return value, nil

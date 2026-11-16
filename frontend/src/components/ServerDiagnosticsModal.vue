@@ -11,7 +11,11 @@
       <div v-if="loading" class="flex flex-col items-center gap-3 py-12">
         <a-spin size="large" />
         <div class="text-sm text-gray-500 dark:text-gray-400">
-          正在从宿主机采集 systemctl / journal 信息...
+          {{
+            platform.hasSystemd
+              ? '正在从宿主机采集 systemctl / journal 信息...'
+              : '正在检查进程与端口状态...'
+          }}
         </div>
       </div>
 
@@ -24,7 +28,7 @@
         />
 
         <a-descriptions v-if="data?.available" bordered size="small" :column="2">
-          <a-descriptions-item label="systemd 状态">
+          <a-descriptions-item :label="platform.hasSystemd ? 'systemd 状态' : '运行状态'">
             {{ data.active_state || '-' }} / {{ data.sub_state || '-' }}
           </a-descriptions-item>
           <a-descriptions-item label="MainPID">
@@ -72,13 +76,21 @@
         </div>
 
         <a-collapse ghost>
-          <a-collapse-panel v-if="journalLines.length" key="journal" header="journal 原始日志（最近 200 行）">
+          <a-collapse-panel
+            v-if="journalLines.length"
+            key="journal"
+            :header="platform.hasSystemd ? 'journal 原始日志（最近 200 行）' : '控制台日志（最近 200 行）'"
+          >
             <pre
               class="max-h-80 overflow-auto rounded-lg bg-gray-950 p-3 text-xs leading-relaxed text-gray-100"
               >{{ journalText }}</pre
             >
           </a-collapse-panel>
-          <a-collapse-panel v-if="data?.status_text" key="status" header="systemctl status">
+          <a-collapse-panel
+            v-if="data?.status_text"
+            key="status"
+            :header="platform.hasSystemd ? 'systemctl status' : '进程状态'"
+          >
             <pre
               class="max-h-64 overflow-auto rounded-lg bg-gray-950 p-3 text-xs leading-relaxed text-gray-100"
               >{{ data.status_text }}</pre
@@ -121,10 +133,15 @@
         >
           <div class="font-semibold text-red-700 dark:text-red-300">可自动处置</div>
           <div class="mt-1 text-sm text-red-700/80 dark:text-red-300/80">
-            隔离会把文件移动到 addons/.quarantine-时间戳/（不删除），并清理 addonlist / maplist
-            中的引用；热重载只刷新 addon 路径，不踢人；重启会断开所有玩家。
+            <template v-if="platform.hasSystemd">
+              隔离会把文件移动到 addons/.quarantine-时间戳/（不删除），并清理 addonlist / maplist
+              中的引用；热重载只刷新 addon 路径，不踢人；重启会断开所有玩家。
+            </template>
+            <template v-else>
+              当前平台没有宿主机处置脚本，无法一键隔离。请手动把下面列出的文件移出 addons 目录，然后重启游戏服。
+            </template>
           </div>
-          <div class="mt-3 flex flex-wrap gap-2">
+          <div v-if="platform.hasSystemd" class="mt-3 flex flex-wrap gap-2">
             <a-button
               type="primary"
               :loading="repairing"
@@ -144,9 +161,14 @@
         >
           <div class="font-semibold text-orange-700 dark:text-orange-300">端口被其他进程占用</div>
           <div class="mt-1 text-sm text-orange-700/80 dark:text-orange-300/80">
-            游戏可能已自动切到下一个端口，玩家连不上。终止占用进程后会重启游戏服。
+            <template v-if="platform.hasSystemd">
+              游戏可能已自动切到下一个端口，玩家连不上。终止占用进程后会重启游戏服。
+            </template>
+            <template v-else>
+              游戏可能已自动切到下一个端口，玩家连不上。请按上面的 PID 手动结束占用进程，再重启游戏服。
+            </template>
           </div>
-          <div class="mt-3">
+          <div v-if="platform.hasSystemd" class="mt-3">
             <a-button
               danger
               type="primary"
@@ -189,7 +211,11 @@
         </a-alert>
 
         <div class="flex justify-end gap-2">
-          <a-button v-if="canRepair" :loading="repairing" @click="emit('repair', 'restart_service')">
+          <a-button
+            v-if="canRepair && platform.hasSystemd"
+            :loading="repairing"
+            @click="emit('repair', 'restart_service')"
+          >
             重启服务
           </a-button>
           <a-button :loading="loading" @click="emit('refresh')">重新采集</a-button>
@@ -209,6 +235,9 @@
     ServerRepairHistoryEntry,
     ServerRepairResult,
   } from '../services/api';
+  import { usePlatformStore } from '../stores/platform';
+
+  const platform = usePlatformStore();
 
   const props = defineProps<{
     open: boolean;

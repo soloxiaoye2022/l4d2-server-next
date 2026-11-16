@@ -8,3 +8,11 @@ coverage
 *.log
 Thumbs.db
 .DS_Store
+
+# 构建产物绝不进镜像上下文：Windows 的 exe、发布 zip、Linux 二进制
+# 注意：不能写 *.zip，backend/resources/sourcetvsupport/*.zip 是 go:embed 资源
+*.exe
+*.exe~
+/l4d2-manager-windows-*.zip
+/backend/l4d2-manager
+/backend/l4d2-manager.exe

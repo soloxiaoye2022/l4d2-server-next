@@ -1,4 +1,4 @@
-export type StartupOptionCategory =
+﻿export type StartupOptionCategory =
   | 'core'
   | 'network'
   | 'gameplay'
@@ -366,7 +366,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     id: 'sv_password',
     name: '服务器密码',
     category: 'security',
-    description: '设置连接服务器所需密码。密码会出现在服务单元和 systemctl 状态中，不建议在这里保存。',
+    description: '设置连接服务器所需密码。密码会以明文出现在启动配置里，不建议在这里保存。',
     aliases: ['+sv_password'],
     value: { kind: 'text', defaultValue: '', placeholder: '建议改在 server.cfg 设置' },
     risk: 'warning',
@@ -538,7 +538,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     id: 'pidfile',
     name: 'PID 文件',
     category: 'wrapper',
-    description: '让 srcds_run 将服务端进程 ID 写入指定文件。systemd 部署通常不需要。',
+    description: '让 srcds_run 将服务端进程 ID 写入指定文件。用服务管理器托管时通常不需要。',
     aliases: ['-pidfile'],
     value: { kind: 'text', defaultValue: 'l4d2.pid', placeholder: 'l4d2.pid' },
     risk: 'advanced',
@@ -547,7 +547,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     id: 'timeout',
     name: '崩溃重启等待',
     category: 'wrapper',
-    description: 'srcds_run 在服务端崩溃后等待多少秒再重启。systemd 自己也会管理重启。',
+    description: 'srcds_run 在服务端崩溃后等待多少秒再重启。由服务管理器托管时会自己管重启。',
     aliases: ['-timeout'],
     value: { kind: 'number', defaultValue: '5', min: 0, max: 3600 },
   },
@@ -581,7 +581,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     id: 'norestart',
     name: '禁用包装器自动重启',
     category: 'wrapper',
-    description: 'srcds_run 崩溃后不自行重启。systemd 部署通常保持关闭，让 systemd 接管重启。',
+    description: 'srcds_run 崩溃后不自行重启。由服务管理器托管时通常保持关闭，交给它接管重启。',
     aliases: ['-norestart'],
     risk: 'advanced',
   },
@@ -597,7 +597,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     id: 'ignoresigint',
     name: '忽略 SIGINT',
     category: 'wrapper',
-    description: '让包装器忽略 Ctrl+C/SIGINT，可能干扰 systemd 正常停止。',
+    description: '让包装器忽略 Ctrl+C/SIGINT，可能干扰服务管理器正常停止。',
     aliases: ['-ignoresigint'],
     risk: 'advanced',
   },

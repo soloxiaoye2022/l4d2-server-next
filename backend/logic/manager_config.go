@@ -28,11 +28,14 @@ type ManagerConfig struct {
 	SteamAPIKey          string          `json:"steam_api_key,omitempty"`
 	// DiskUsageLimitPercent 是地图上传与下载任务允许的磁盘使用率上限。
 	DiskUsageLimitPercent int `json:"disk_usage_limit_percent"`
+	// MapCleanup 是地图自动清理设置，由 map_cleanup.go 读取与写入。
+	MapCleanup MapCleanupSettings `json:"map_cleanup"`
 }
 
 var (
-	managerConfig      *ManagerConfig
-	managerConfigMutex sync.RWMutex
+	managerConfig          *ManagerConfig
+	managerConfigMutex     sync.RWMutex
+	managerConfigLoadError error
 )
 
 func init() {
@@ -51,7 +54,9 @@ func LoadManagerConfig() {
 		MapHotReloadCommand:   DefaultMapHotReloadCommand,
 		SteamCDNIP:            "",
 		DiskUsageLimitPercent: DefaultDiskUsageLimitPercent,
+		MapCleanup:            MapCleanupSettings{RetentionDays: DefaultMapCleanupRetentionDays},
 	}
+	managerConfigLoadError = nil
 
 	if _, err := os.Stat(consts.ManagerConfigPath); os.IsNotExist(err) {
 		return
@@ -59,12 +64,21 @@ func LoadManagerConfig() {
 
 	data, err := os.ReadFile(consts.ManagerConfigPath)
 	if err != nil {
+		managerConfigLoadError = fmt.Errorf("读取面板配置失败: %w", err)
 		return
 	}
 
-	if err := json.Unmarshal(data, managerConfig); err != nil {
+	// 先反序列化到副本，校验通过才发布。半解析的配置不能让破坏性任务生效。
+	loaded := *managerConfig
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		managerConfigLoadError = fmt.Errorf("解析面板配置失败: %w", err)
 		return
 	}
+	if err := validateStoredMapCleanupConfig(data, loaded.MapCleanup); err != nil {
+		managerConfigLoadError = err
+		return
+	}
+	managerConfig = &loaded
 
 	if !IsDiskUsageLimitPercentValid(managerConfig.DiskUsageLimitPercent) {
 		managerConfig.DiskUsageLimitPercent = DefaultDiskUsageLimitPercent
@@ -79,7 +93,13 @@ func LoadManagerConfig() {
 }
 
 func saveManagerConfig() error {
-	data, err := json.MarshalIndent(managerConfig, "", "  ")
+	return persistManagerConfig(managerConfig)
+}
+
+// persistManagerConfig 写入完整的候选配置，成功之前不发布给读者。
+// 调用方持有 managerConfigMutex，写盘成功后再替换 managerConfig。
+func persistManagerConfig(candidate *ManagerConfig) error {
+	data, err := json.MarshalIndent(candidate, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -91,7 +111,7 @@ func saveManagerConfig() error {
 		return err
 	}
 	defer os.Remove(temporary.Name())
-	// manager_config.json can contain the Steam API key.
+	// manager_config.json 里可能存有 Steam API Key，权限固定 0600。
 	mode := os.FileMode(0600)
 	if err = temporary.Chmod(mode); err == nil {
 		_, err = temporary.Write(data)

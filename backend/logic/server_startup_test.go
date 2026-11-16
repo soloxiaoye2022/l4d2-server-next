@@ -78,6 +78,7 @@ func TestNormalizeServerStartupRejectsInvalidValues(t *testing.T) {
 }
 
 func TestGetServerStartupConfigReadsUnitAndStatus(t *testing.T) {
+	forceSystemdStartup(t)
 	root := t.TempDir()
 	unitPath := filepath.Join(root, "l4d2.service")
 	resultPath := filepath.Join(root, "result.json")
@@ -104,6 +105,7 @@ func TestGetServerStartupConfigReadsUnitAndStatus(t *testing.T) {
 }
 
 func TestUpdateServerStartupWritesUnitAndReloadTrigger(t *testing.T) {
+	forceSystemdStartup(t)
 	root := t.TempDir()
 	unitPath := filepath.Join(root, "l4d2.service")
 	resultPath := filepath.Join(root, "result.json")

@@ -28,6 +28,7 @@ ExecStart=/home/ubuntu/steamcmd/l4d2/srcds_run -game left4dead2 +hostport 27015
 }
 
 func TestServerMaintenanceRequestAndResult(t *testing.T) {
+	forceSystemdStartup(t)
 	root := setupMaintenanceTest(t)
 	status, err := RequestServerMaintenance(MaintenanceActionCheck)
 	if err != nil {
@@ -68,6 +69,7 @@ func TestServerMaintenanceRequestAndResult(t *testing.T) {
 }
 
 func TestConfigureSourceTVStartup(t *testing.T) {
+	forceSystemdStartup(t)
 	setupMaintenanceTest(t)
 	config, err := ConfigureSourceTVStartup()
 	if err != nil {

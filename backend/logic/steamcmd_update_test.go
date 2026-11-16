@@ -10,6 +10,7 @@ import (
 )
 
 func TestGenerateSteamCMDUpdateScript(t *testing.T) {
+	forceSystemdStartup(t)
 	root := t.TempDir()
 	oldGamePath := consts.GamePath
 	consts.GamePath = filepath.Join(root, "left4dead2")

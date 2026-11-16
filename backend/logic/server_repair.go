@@ -140,11 +140,30 @@ func RequestServerRepair(action string, operator string, wait time.Duration) (Re
 	defer serverRepairMu.Unlock()
 
 	startedAt := time.Now()
+	// The "nothing to repair" short circuit runs before the platform guard: with
+	// no broken VPKs there is no work for either platform, and reporting an error
+	// would be misleading.
 	if !isServiceRepairAction(action) && len(FindInvalidAddonVPKs()) == 0 {
 		result := RepairResult{
 			Action:            action,
 			Status:            RepairStatusNoop,
 			Message:           "addons 目录下没有发现损坏的 VPK，无需处置",
+			Quarantined:       []RepairQuarantinedVPK{},
+			CleanedReferences: []RepairCleanedReference{},
+			Remaining:         []InvalidAddonVPK{},
+			VerifyRemaining:   []InvalidAddonVPK{},
+		}
+		appendRepairHistory(result, operator, startedAt)
+		return result, nil
+	}
+	if requiresHostHelper(action) && !HasSystemd() {
+		// Every repair action delegates to repair-addons.sh on the host. Without
+		// systemd there is no script to run, so fail fast with an actionable
+		// message instead of timing out after 45 seconds.
+		result := RepairResult{
+			Action:            action,
+			Status:            RepairStatusError,
+			Message:           "当前平台没有宿主机处置脚本，无法执行隔离、重启或终止端口占用。请在 Windows 下按诊断建议手动处理。",
 			Quarantined:       []RepairQuarantinedVPK{},
 			CleanedReferences: []RepairCleanedReference{},
 			Remaining:         []InvalidAddonVPK{},
@@ -213,6 +232,13 @@ func isRepairAction(action string) bool {
 // addons directory, so the "no broken VPK" short circuit must not apply.
 func isServiceRepairAction(action string) bool {
 	return action == RepairActionRestartService || action == RepairActionKillPortAndRestart
+}
+
+// requiresHostHelper reports whether the action depends on the Linux host
+// script. Every action except a pure in-process addon scan delegates to
+// repair-addons.sh, which does not exist on Windows.
+func requiresHostHelper(action string) bool {
+	return isRepairAction(action)
 }
 
 // finalizeRepairResult runs the container-side follow-up (hot reload) and

@@ -92,6 +92,26 @@ func diagnosticsControlDir() string {
 	return maintenanceControlDir()
 }
 
+// DiagnosticsAvailable reports whether this platform can collect a fresh
+// startup snapshot. The Linux path unit lives on the host; Windows has no
+// equivalent, so the panel must say so instead of waiting for a timeout.
+func DiagnosticsAvailable() bool {
+	return HasSystemd()
+}
+
+// serverStartupPort resolves the game port from the startup config, falling
+// back to L4D2_PORT and then the default. Windows diagnostics need it before
+// any unit file can be parsed.
+func serverStartupPort() int {
+	if cfg, err := GetServerStartupConfig(); err == nil && cfg.Port > 0 {
+		return cfg.Port
+	}
+	if port := parsePort(os.Getenv("L4D2_PORT")); port > 0 {
+		return port
+	}
+	return DefaultGameServerPort
+}
+
 func diagnosticsRequestPath() string {
 	return filepath.Join(diagnosticsControlDir(), "diagnostics-request.json")
 }
@@ -113,10 +133,42 @@ func serverDiagnosticsBridgeHint(message string) ServerDiagnosticHint {
 	}
 }
 
+// unsupportedDiagnosticsHint explains the platform limitation instead of
+// pretending the bridge is broken. Users on Windows should not go hunting for
+// a systemd unit that can never exist there.
+func unsupportedDiagnosticsHint() ServerDiagnosticHint {
+	return ServerDiagnosticHint{
+		Level:      diagnosticsLevelInfo,
+		Title:      "当前平台不支持 systemd 诊断",
+		Detail:     "启动诊断依赖宿主机的 systemd path unit 采集 journal 与端口快照，Windows 没有对应机制。",
+		Suggestion: "Windows 下请直接查看游戏服控制台窗口；面板仍可检查 addons 目录中的损坏 VPK，并执行隔离处置。",
+	}
+}
+
 // CollectServerDiagnostics asks the host-side path unit for a fresh systemd
-// snapshot and waits briefly for the matching result.
+// snapshot and waits briefly for the matching result. On platforms without
+// systemd it returns immediately with an explanatory hint instead of blocking
+// for the full timeout.
 func CollectServerDiagnostics(wait time.Duration) ServerDiagnosticsResponse {
 	serviceName := serverStartupServiceName()
+	if !DiagnosticsAvailable() {
+		// Windows has no systemd, but the process table still tells us whether
+		// the port is bound and who owns it. Report that instead of an empty
+		// "unsupported" page.
+		diagnostics := CollectLocalDiagnostics(serverStartupPort())
+		response := BuildServerDiagnosticsResponse(diagnostics)
+		// Keep the platform note, but let real problems win the summary line.
+		// The hint list is re-sorted so an unbound port outranks "unsupported".
+		response.Hints = append(response.Hints, unsupportedDiagnosticsHint())
+		sort.SliceStable(response.Hints, func(i, j int) bool {
+			return diagnosticsLevelRank(response.Hints[i].Level) <
+				diagnosticsLevelRank(response.Hints[j].Level)
+		})
+		if len(response.Hints) > 0 {
+			response.Summary = response.Hints[0].Title
+		}
+		return response
+	}
 	request := diagnosticsRequest{
 		RequestID:   uuid.NewString(),
 		ServiceName: serviceName,

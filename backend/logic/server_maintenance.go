@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -57,7 +56,7 @@ func maintenanceControlDir() string {
 	if value := strings.TrimSpace(os.Getenv("L4D2_MAINTENANCE_CONTROL_DIR")); value != "" {
 		return value
 	}
-	return "/control"
+	return DefaultControlDir()
 }
 
 func maintenanceRequestPath() string {
@@ -76,7 +75,7 @@ func GetServerMaintenanceStatus() (ServerMaintenanceStatus, error) {
 	status := ServerMaintenanceStatus{
 		Status:           "idle",
 		Message:          "尚未检查更新",
-		SteamDirectory:   path.Dir(startup.WorkingDirectory),
+		SteamDirectory:   dirOfPathStyle(startup.WorkingDirectory),
 		InstallDirectory: startup.WorkingDirectory,
 		ServiceName:      startup.ServiceName,
 	}
@@ -136,7 +135,7 @@ func RequestServerMaintenance(action string) (ServerMaintenanceStatus, error) {
 	request := MaintenanceRequest{
 		RequestID:   uuid.NewString(),
 		Action:      action,
-		SteamDir:    path.Dir(startup.WorkingDirectory),
+		SteamDir:    dirOfPathStyle(startup.WorkingDirectory),
 		InstallDir:  startup.WorkingDirectory,
 		ServiceName: startup.ServiceName,
 		RequestedAt: time.Now().UTC().Format(time.RFC3339Nano),

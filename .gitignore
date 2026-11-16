@@ -4,6 +4,8 @@ private.key
 /backend/plugins/
 /backend/manager_config.json
 /backend/data/
+/backend/controller/data/
+/backend/logic/data/
 /data/
 /.gocache/
 *.exe

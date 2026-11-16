@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"l4d2-manager-next/consts"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -40,8 +39,8 @@ func GetSteamCMDUpdateConfig() (SteamCMDUpdateConfig, error) {
 		return config, nil
 	}
 	config.Available = true
-	config.SteamDirectory = path.Dir(startup.WorkingDirectory)
-	config.ScriptPath = path.Join(startup.WorkingDirectory, "left4dead2", "update_l4d2.txt")
+	config.SteamDirectory = dirOfPathStyle(startup.WorkingDirectory)
+	config.ScriptPath = joinPathStyle(startup.WorkingDirectory, "left4dead2", "update_l4d2.txt")
 	localScriptPath := filepath.Join(consts.GamePath, "update_l4d2.txt")
 	data, readErr := os.ReadFile(localScriptPath)
 	if readErr == nil {
@@ -75,13 +74,13 @@ func GenerateSteamCMDUpdateScript(request GenerateSteamCMDUpdateRequest) (SteamC
 	}
 	steamDirectory := strings.TrimSpace(request.SteamDirectory)
 	if steamDirectory == "" {
-		steamDirectory = path.Dir(startup.WorkingDirectory)
+		steamDirectory = dirOfPathStyle(startup.WorkingDirectory)
 	}
 	steamDirectory, err = normalizeSystemdWorkingDirectory(steamDirectory)
 	if err != nil {
 		return SteamCMDUpdateConfig{}, fmt.Errorf("SteamCMD 目录无效: %w", err)
 	}
-	scriptPath := path.Join(startup.WorkingDirectory, "left4dead2", "update_l4d2.txt")
+	scriptPath := joinPathStyle(startup.WorkingDirectory, "left4dead2", "update_l4d2.txt")
 	content := fmt.Sprintf(`force_install_dir %s
 login anonymous
 @sSteamCmdForcePlatformType linux

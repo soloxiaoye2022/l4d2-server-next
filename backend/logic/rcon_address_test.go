@@ -7,6 +7,7 @@ import (
 )
 
 func TestResolveRconURLUsesStartupPort(t *testing.T) {
+	forceSystemdStartup(t)
 	unitPath := filepath.Join(t.TempDir(), "l4d2.service")
 	if err := os.WriteFile(unitPath, []byte(`[Service]
 ExecStart=/l4d2/srcds_run -game left4dead2 \
@@ -31,6 +32,7 @@ ExecStart=/l4d2/srcds_run -game left4dead2 \
 }
 
 func TestResolveRconURLSupportsLegacyStartupPath(t *testing.T) {
+	forceSystemdStartup(t)
 	unitPath := filepath.Join(t.TempDir(), "l4d2.service")
 	if err := os.WriteFile(unitPath, []byte(`[Service]
 ExecStart=/l4d2/srcds_run +hostport=12138
@@ -54,6 +56,7 @@ ExecStart=/l4d2/srcds_run +hostport=12138
 }
 
 func TestResolveRconURLSupportsGamePortAlias(t *testing.T) {
+	forceSystemdStartup(t)
 	t.Setenv("L4D2_RCON_URL", "127.0.0.1:27015")
 	t.Setenv("L4D2_RCON_PORT", "")
 	t.Setenv("L4D2_PORT", "12139")
@@ -70,6 +73,7 @@ func TestResolveRconURLSupportsGamePortAlias(t *testing.T) {
 }
 
 func TestResolveRconURLExplicitPortOverride(t *testing.T) {
+	forceSystemdStartup(t)
 	unitPath := filepath.Join(t.TempDir(), "l4d2.service")
 	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/l4d2/srcds_run +hostport 12138\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -89,6 +93,7 @@ func TestResolveRconURLExplicitPortOverride(t *testing.T) {
 }
 
 func TestResolveRconURLFallsBackWhenUnitIsMissing(t *testing.T) {
+	forceSystemdStartup(t)
 	t.Setenv("L4D2_RCON_URL", "127.0.0.1:12141")
 	t.Setenv("L4D2_RCON_PORT", "")
 	t.Setenv("L4D2_PORT", "")
@@ -105,6 +110,7 @@ func TestResolveRconURLFallsBackWhenUnitIsMissing(t *testing.T) {
 }
 
 func TestResolveRconURLPreservesIPv6Host(t *testing.T) {
+	forceSystemdStartup(t)
 	unitPath := filepath.Join(t.TempDir(), "l4d2.service")
 	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/l4d2/srcds_run +hostport 12138\n"), 0o644); err != nil {
 		t.Fatal(err)

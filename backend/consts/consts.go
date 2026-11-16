@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 var AddonsBasePath string
@@ -55,11 +56,24 @@ func init() {
 				GamePath = abs
 			}
 		} else {
-			GamePath = "/left4dead2"
+			// Linux containers mount the game at /left4dead2; Windows builds run
+			// next to a local left4dead2 folder, so a Unix absolute path would
+			// resolve to a drive-relative path and never exist.
+			GamePath = defaultGamePath()
 		}
 	}
 	AddonsBasePath = filepath.Join(GamePath, "addons")
 	MapListFilePath = filepath.Join(AddonsBasePath, "maplist.txt")
+}
+
+// defaultGamePath returns the platform-specific fallback game directory. It is
+// duplicated from logic.platformDefaultGamePath on purpose: consts must not
+// import logic (logic already imports consts).
+func defaultGamePath() string {
+	if runtime.GOOS == "windows" {
+		return "left4dead2"
+	}
+	return "/left4dead2"
 }
 
 func EnsureManagerDataPath() error {
