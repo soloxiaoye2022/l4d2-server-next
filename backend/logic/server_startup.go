@@ -574,6 +574,15 @@ func writeStartupUnitAtomic(path string, data []byte) error {
 	return nil
 }
 
+// triggerStartupReload 通知宿主机重载 systemd。
+//
+// 修复 D2：旧实现无条件写 /control/systemd-reload，但宿主机上没有任何
+// path unit 监听这个文件，用户会永远停在"等待重载"。
+//
+// 现在的规则：
+//  1. 配了 L4D2_STARTUP_RELOAD_CMD → 直接执行命令（同步、可验证）；
+//  2. 配了 L4D2_STARTUP_RELOAD_TRIGGER → 写该文件（用户自建了监听）；
+//  3. 都没配 → 不写死文件，因为写 unit 本身就会触发 l4d2-startup.path。
 func triggerStartupReload() (string, string, error) {
 	if command := strings.TrimSpace(os.Getenv("L4D2_STARTUP_RELOAD_CMD")); command != "" {
 		var cmd *exec.Cmd
@@ -589,9 +598,12 @@ func triggerStartupReload() (string, string, error) {
 		return "command", "systemd 服务定义已重载", nil
 	}
 
-	triggerPath := serverStartupReloadTrigger()
+	triggerPath := strings.TrimSpace(os.Getenv("L4D2_STARTUP_RELOAD_TRIGGER"))
 	if triggerPath == "" {
-		return "none", "启动项已保存，等待 systemd 重载", nil
+		if IsWindows() {
+			return "none", "启动项已保存，重启后生效", nil
+		}
+		return "filesystem-watch", "启动项已保存，宿主机 path unit 会自动重载", nil
 	}
 	if info, err := os.Stat(filepath.Dir(triggerPath)); err != nil || !info.IsDir() {
 		return "none", "启动项已保存，未检测到宿主重载通道", nil

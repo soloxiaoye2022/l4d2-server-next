@@ -156,7 +156,7 @@ func RequestServerRepair(action string, operator string, wait time.Duration) (Re
 		appendRepairHistory(result, operator, startedAt)
 		return result, nil
 	}
-	if requiresHostHelper(action) && !HasSystemd() {
+	if requiresHostHelper(action) && !HasSystemd() && !managedRuntimeAvailable() {
 		// Every repair action delegates to repair-addons.sh on the host. Without
 		// systemd there is no script to run, so fail fast with an actionable
 		// message instead of timing out after 45 seconds.
@@ -173,6 +173,12 @@ func RequestServerRepair(action string, operator string, wait time.Duration) (Re
 		return result, nil
 	}
 
+	// 修复 D4：修复脚本里的重启也要走当前运行时，而不是 systemctl。
+	if _, err := WriteRuntimeControlSnapshot(); err != nil {
+		result := RepairResult{Action: action, Status: RepairStatusError, Message: err.Error()}
+		appendRepairHistory(result, operator, startedAt)
+		return result, nil
+	}
 	request := repairRequest{
 		RequestID:   uuid.NewString(),
 		Action:      action,

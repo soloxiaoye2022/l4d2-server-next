@@ -11,10 +11,13 @@ RESULT_PATH="${CONTROL_DIR}/repair-result.json"
 ADDONS_DIR="${L4D2_ADDONS_DIR:-/home/ubuntu/steamcmd/l4d2/left4dead2/addons}"
 SERVICE_NAME="${L4D2_STARTUP_SERVICE_NAME:-l4d2.service}"
 GAME_PORT="${L4D2_GAME_PORT:-0}"
+RUNTIME_CONTROL="${L4D2_RUNTIME_CONTROL:-${MANAGER_DIR}/runtime-control.sh}"
+RUNTIME_SNAPSHOT="${CONTROL_DIR}/runtime-control.json"
 
 mkdir -p "$CONTROL_DIR" 2>/dev/null || true
 
-exec python3 - "$REQUEST_PATH" "$RESULT_PATH" "$ADDONS_DIR" "$SERVICE_NAME" "$GAME_PORT" <<'PY'
+exec python3 - "$REQUEST_PATH" "$RESULT_PATH" "$ADDONS_DIR" "$SERVICE_NAME" "$GAME_PORT" \
+  "$RUNTIME_CONTROL" "$RUNTIME_SNAPSHOT" <<'PY'
 import datetime
 import json
 import os
@@ -26,7 +29,15 @@ import sys
 import tempfile
 import time
 
-request_path, result_path, addons_dir, service, game_port = sys.argv[1:6]
+(
+    request_path,
+    result_path,
+    addons_dir,
+    service,
+    game_port,
+    runtime_control,
+    runtime_snapshot,
+) = sys.argv[1:8]
 try:
     game_port = int(game_port)
 except ValueError:
@@ -212,9 +223,39 @@ def kill_port_owners(port):
     return killed
 
 
+def service_control(action):
+    """停止/启动游戏服。
+
+    修复 D4：优先走 runtime-control.sh（读面板写下的运行时快照），
+    只有快照不存在时才回退 systemctl —— 即还没有接管任何运行时的老部署。
+    返回 (是否成功, 输出)。
+    """
+    if os.access(runtime_control, os.X_OK) and os.path.isfile(runtime_snapshot):
+        completed = subprocess.run(
+            [runtime_control, action, runtime_snapshot],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=120,
+        )
+        output = (completed.stdout or "").strip()
+        if completed.returncode in (0, 2):
+            return completed.returncode == 0, output
+        return False, output
+    return None, ""
+
+
 def restart_service(port):
     state = {"requested": True, "ok": False, "port": port, "port_listening": False}
-    run(["systemctl", "restart", service], timeout=60)
+    handled, output = service_control("restart")
+    if handled is None:
+        run(["systemctl", "restart", service], timeout=60)
+        state["active_state"] = run(["systemctl", "is-active", service], timeout=5)
+    else:
+        if not handled:
+            state["message"] = f"重启失败: {output[:300]}"
+            return state
+        state["active_state"] = "restarted"
     deadline = time.time() + 30
     while time.time() < deadline:
         if port_listening(port):
@@ -222,7 +263,6 @@ def restart_service(port):
             state["port_listening"] = True
             break
         time.sleep(2)
-    state["active_state"] = run(["systemctl", "is-active", service], timeout=5)
     if not state["ok"]:
         state["message"] = f"服务已重启，但 {port} 端口在 30 秒内仍未被监听"
     return state

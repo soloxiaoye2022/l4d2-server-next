@@ -1,0 +1,11 @@
+# 运行时 Agent 的 ruff 配置。
+#
+# 为什么需要显式写：
+#   从仓库根和从本目录执行 ruff 时，"第一方包"的判定不同，
+#   会把 agentlib / providers 当成第三方重新排序，出现"修完又报"的假象。
+#   显式声明后两种执行方式结果一致。
+target-version = "py39"
+line-length = 100
+
+[lint.isort]
+known-first-party = ["agentlib", "providers"]

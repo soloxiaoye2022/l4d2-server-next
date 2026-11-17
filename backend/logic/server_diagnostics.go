@@ -93,10 +93,10 @@ func diagnosticsControlDir() string {
 }
 
 // DiagnosticsAvailable reports whether this platform can collect a fresh
-// startup snapshot. The Linux path unit lives on the host; Windows has no
-// equivalent, so the panel must say so instead of waiting for a timeout.
+// startup snapshot. Linux 的 systemd path unit 是一条通道；
+// 只要用户接管过运行时，运行时长通道同样可用（D5）。
 func DiagnosticsAvailable() bool {
-	return HasSystemd()
+	return HasSystemd() || managedRuntimeAvailable()
 }
 
 // serverStartupPort resolves the game port from the startup config, falling
@@ -151,6 +151,14 @@ func unsupportedDiagnosticsHint() ServerDiagnosticHint {
 // for the full timeout.
 func CollectServerDiagnostics(wait time.Duration) ServerDiagnosticsResponse {
 	serviceName := serverStartupServiceName()
+
+	// 修复 D5：优先走运行时子系统采集。
+	// 旧实现只有 systemd 能出数据，接管 screen/tmux/nohup/docker 后诊断页全空。
+	// 只要用户显式接管过运行时，就用 Manager 的 inspect + logs 组装同一套诊断。
+	if diagnostics, ok := CollectRuntimeDiagnostics(serverStartupPort()); ok {
+		return BuildServerDiagnosticsResponse(diagnostics)
+	}
+
 	if !DiagnosticsAvailable() {
 		// Windows has no systemd, but the process table still tells us whether
 		// the port is bound and who owns it. Report that instead of an empty

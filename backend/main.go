@@ -17,6 +17,11 @@ import (
 )
 
 func main() {
+	// 生产默认使用 release 模式，避免启动时打印上百条路由和调试警告。
+	// 显式设置 GIN_MODE 时尊重外部配置（例如本地排查需要 debug）。
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	if err := logic.InitPluginMetadata(); err != nil {
 		log.Printf("plugin metadata initialization: %v", err)
 	}
@@ -45,6 +50,9 @@ func main() {
 	go logic.CleanVPKScriptEditTemp()
 
 	logic.InitAccessControl()
+	// 运行时子系统在启动时完成一次 Agent 探测，避免首个 /platform 请求
+	// 承担 2.5 秒的探测延迟。
+	logic.InitRuntimeManager()
 	if err := logic.EnsureGameBanPersistenceConfig(); err != nil {
 		log.Printf("game ban persistence configuration is not ready: %v", err)
 	}
@@ -132,6 +140,8 @@ func main() {
 	router.POST("/upload/merge", middlewares.Auth(), controller.UploadMerge)
 	router.POST("/upload/cancel", middlewares.Auth(), controller.UploadCancel)
 	router.POST("/restart", middlewares.Auth(), controller.Restart)
+	router.POST("/start", middlewares.Auth(), controller.Start)
+	router.POST("/stop", middlewares.Auth(), controller.Stop)
 	router.POST("/clear", middlewares.Auth(), controller.Clear)
 	router.POST("/list", middlewares.Auth(), controller.List)
 	router.POST("/maps/list", middlewares.Auth(), controller.ListMapLifecycle)
@@ -242,6 +252,25 @@ func main() {
 	{
 		serverInfo.POST("/get", controller.GetServerInfo)
 		serverInfo.POST("/update", controller.UpdateServerInfo)
+	}
+
+	// Runtime Group：多运行时适配框架（设计文档 §10）
+	runtimeGroup := router.Group("/runtime", middlewares.Auth())
+	{
+		runtimeGroup.GET("/list", controller.ListRuntimes)
+		runtimeGroup.GET("/get", controller.GetRuntime)
+		runtimeGroup.GET("/status", controller.GetRuntimeStatus)
+		runtimeGroup.GET("/logs", controller.GetRuntimeLogs)
+		runtimeGroup.GET("/events", controller.GetRuntimeEvents)
+		runtimeGroup.POST("/action", controller.PostRuntimeAction)
+		runtimeGroup.POST("/detect", controller.PostRuntimeDetect)
+		runtimeGroup.POST("/adopt", controller.PostRuntimeAdopt)
+		runtimeGroup.POST("/detach", controller.PostRuntimeDetach)
+		runtimeGroup.POST("/create", controller.PostRuntimeCreate)
+		runtimeGroup.POST("/update", controller.PostRuntimeUpdate)
+		runtimeGroup.POST("/delete", controller.PostRuntimeDelete)
+		runtimeGroup.POST("/migrate/plan", controller.PostRuntimeMigratePlan)
+		runtimeGroup.POST("/migrate/apply", controller.PostRuntimeMigrateApply)
 	}
 
 	// Server Config Group

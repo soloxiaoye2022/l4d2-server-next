@@ -32,6 +32,7 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0"
 EXPOSE 27020
 COPY --chown=${APP_UID}:${APP_GID} ./plugins /plugins
 COPY ./manifest/systemd /manager-systemd
+COPY ./manifest/runtime-agent /manager-runtime-agent
 RUN chmod +x /manager-systemd/*.sh
 RUN mkdir -p /data /control \
     && chown "${APP_UID}:${APP_GID}" /data /control

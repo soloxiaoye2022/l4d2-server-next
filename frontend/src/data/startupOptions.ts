@@ -21,6 +21,8 @@ export interface StartupValueDefinition {
   options?: StartupSelectValue[];
   min?: number;
   max?: number;
+  /** 数值型启动项的常用取值，弹窗中渲染为可点选按钮。 */
+  presets?: string[];
 }
 
 export interface StartupOptionDefinition {
@@ -96,7 +98,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'core',
     description: '服务端允许的最大连接人数。原版通常为 4-8 人，超过原版上限需要人数扩展插件。',
     aliases: ['+maxplayers', '-maxplayers'],
-    value: { kind: 'number', defaultValue: '8', min: 1, max: 31 },
+    value: { kind: 'number', defaultValue: '8', min: 1, max: 31, presets: ['4', '8', '16', '31'] },
     recommended: true,
   },
   {
@@ -132,7 +134,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'core',
     description: '玩家连接和服务器通信使用的 UDP/TCP 端口，需在防火墙和云安全组放行。',
     aliases: ['+hostport', '+port', '-port'],
-    value: { kind: 'number', defaultValue: '27015', min: 1, max: 65535 },
+    value: { kind: 'number', defaultValue: '27015', min: 1, max: 65535, presets: ['27015', '27016', '27017', '27018'] },
     recommended: true,
   },
   {
@@ -158,7 +160,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'network',
     description: 'Source 客户端侧连接使用的本地端口。专用服务器通常无需设置。',
     aliases: ['+clientport'],
-    value: { kind: 'number', defaultValue: '27005', min: 1, max: 65535 },
+    value: { kind: 'number', defaultValue: '27005', min: 1, max: 65535, presets: ['27005', '27006'] },
     risk: 'advanced',
   },
   {
@@ -167,7 +169,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'network',
     description: 'Steam 网络通信使用的端口。只有特殊网络布局或多实例部署时才需要指定。',
     aliases: ['-steamport'],
-    value: { kind: 'number', defaultValue: '26900', min: 1, max: 65535 },
+    value: { kind: 'number', defaultValue: '26900', min: 1, max: 65535, presets: ['26900', '26901'] },
     risk: 'advanced',
   },
   {
@@ -224,7 +226,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'network',
     description: '指定 Source 外部控制台监听端口，仅建议高级用户使用。',
     aliases: ['-netconport'],
-    value: { kind: 'number', defaultValue: '27016', min: 1, max: 65535 },
+    value: { kind: 'number', defaultValue: '27016', min: 1, max: 65535, presets: ['27016', '27017'] },
     risk: 'advanced',
   },
   {
@@ -272,7 +274,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'gameplay',
     description: '修改引擎 MaxClients 槽位上限，不是实际可玩人数。需要 l4dtoolz；建议最高 31，并继续用 sv_maxplayers 控制真正可进入的人数。',
     aliases: ['+sv_setmax'],
-    value: { kind: 'number', defaultValue: '31', min: 1, max: 31 },
+    value: { kind: 'number', defaultValue: '31', min: 1, max: 31, presets: ['8', '16', '24', '31'] },
     risk: 'warning',
     requiresPlugin: 'l4dtoolz',
   },
@@ -282,7 +284,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'gameplay',
     description: 'L4DToolz 提供的实际玩家上限，和引擎槽位 sv_setmax 分开设置。',
     aliases: ['+sv_maxplayers'],
-    value: { kind: 'number', defaultValue: '31', min: -1, max: 31 },
+    value: { kind: 'number', defaultValue: '31', min: -1, max: 31, presets: ['4', '8', '16', '31'] },
     risk: 'warning',
     requiresPlugin: 'l4dtoolz',
   },
@@ -292,7 +294,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'gameplay',
     description: '控制服务器浏览器和状态中显示的可见人数上限。',
     aliases: ['+sv_visiblemaxplayers'],
-    value: { kind: 'number', defaultValue: '31', min: -1, max: 31 },
+    value: { kind: 'number', defaultValue: '31', min: -1, max: 31, presets: ['-1', '8', '16', '31'] },
     risk: 'advanced',
   },
   {
@@ -309,7 +311,13 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'gameplay',
     description: '设置服务器所在数字区域，用于服务器浏览器筛选。',
     aliases: ['+sv_region'],
-    value: { kind: 'number', defaultValue: '4', min: 0, max: 255 },
+    value: {
+      kind: 'number',
+      defaultValue: '4',
+      min: 0,
+      max: 255,
+      presets: ['255', '4', '3', '0', '1', '2', '5', '6', '7'],
+    },
     risk: 'advanced',
   },
   {
@@ -452,7 +460,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'hltv',
     description: 'SourceTV 连接端口，必须与游戏服端口和管理面板端口错开。',
     aliases: ['+tv_port'],
-    value: { kind: 'number', defaultValue: '27021', min: 1, max: 65535 },
+    value: { kind: 'number', defaultValue: '27021', min: 1, max: 65535, presets: ['27020', '27021', '27022'] },
     risk: 'warning',
     integration: 'sourcetv',
   },
@@ -462,7 +470,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'hltv',
     description: '允许同时连接 SourceTV 的观众数量。',
     aliases: ['+tv_maxclients'],
-    value: { kind: 'number', defaultValue: '8', min: 1, max: 255 },
+    value: { kind: 'number', defaultValue: '8', min: 1, max: 255, presets: ['4', '8', '16', '32'] },
     integration: 'sourcetv',
   },
   {
@@ -471,7 +479,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'hltv',
     description: 'SourceTV 转发延迟秒数，用于避免观战者实时获取比赛信息。',
     aliases: ['+tv_delay'],
-    value: { kind: 'number', defaultValue: '90', min: 0, max: 600 },
+    value: { kind: 'number', defaultValue: '90', min: 0, max: 600, presets: ['0', '30', '60', '90', '120'] },
     integration: 'sourcetv',
   },
   {
@@ -549,7 +557,7 @@ export const startupOptions: StartupOptionDefinition[] = [
     category: 'wrapper',
     description: 'srcds_run 在服务端崩溃后等待多少秒再重启。由服务管理器托管时会自己管重启。',
     aliases: ['-timeout'],
-    value: { kind: 'number', defaultValue: '5', min: 0, max: 3600 },
+    value: { kind: 'number', defaultValue: '5', min: 0, max: 3600, presets: ['0', '5', '10', '30'] },
   },
   {
     id: 'autoupdate',

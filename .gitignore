@@ -23,7 +23,17 @@ __debug_*
 .codegraph
 .zcode
 node_modules/
+__pycache__/
+*.pyc
+.ruff_cache/
 /docs/.vitepress/cache/
 /docs/.vitepress/dist/
 # Local archive regression samples (not included in commits)
 /backend/controller/testdata/
+# 本地运维脚本与构建产物，含远端主机地址和发布包，不进仓库
+/build/
+/_archive/
+# 面板运行时生成的插件注册表（本地开发产物）
+/plugins/plugins.yaml
+# 本地以 backend/logic/runtime 为工作目录跑面板时会生成 control/ 目录
+/backend/logic/runtime/control/

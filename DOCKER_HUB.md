@@ -1,59 +1,52 @@
 # L4D2 Server Next 增强版
 
-改自 `LaoYutang/l4d2-server-next v1.15.3`。
-
-原版功能挺全，但有些日常操作还是得登服务器改文件。这个版本把它们搬进了 Web 面板：改启动项、更新服务端、修 SourceTV、填 Steam API Key、清理玩家名，浏览器里点完就行。
+基于 [LaoYutang/l4d2-server-next](https://github.com/LaoYutang/l4d2-server-next) 的增强分支，把日常运维从 SSH 搬进浏览器：改启动项、更新服务端、修坏插件、接管已有服务端，都在面板里点。
 
 ## 镜像
 
 | 镜像 | 用途 |
 |---|---|
-| `soloxiaoye2022/l4d2-manager-next` | Web 管理器，面板本体 |
-| `soloxiaoye2022/l4d2-pure` | 游戏服，预装了 SteamCMD 和 L4D2 服务端 |
+| `soloxiaoye2022/l4d2-manager-next` | 管理面板 |
+| `soloxiaoye2022/l4d2-pure` | 游戏服，已装 SteamCMD 和 L4D2 服务端 |
 
-标签跟日期走：
+标签：`latest`、`2026.11.17`（按日期）。
 
-- `2026.11.04`
-- `latest`
+## 本次更新（2026.11.17）
 
-## 改了什么
+### 运行时管理
 
-**启动项** —— 常用参数都配了中文说明和分类，可以直接从预设里挑，也能自己加。改完能看到完整的 `ExecStart` 长什么样。
+以前面板只认 systemd 服务。如果你的服是 `screen`、`tmux`、`nohup` 拉起来的，或者跑在 MCSM、LGSM、另一个 Docker 容器里，面板基本没法管。
 
-**端口** —— 面板从启动项的 `+hostport`、`+port`、`-port` 里读游戏端口。换了端口不用再回头改面板配置，也不用重启管理器。
+现在新增「运行时管理」页，支持 9 种运行时：`systemd`、`systemd-user`、`docker`、`screen`、`tmux`、`nohup`、`bare`、`mcsm`、`lgsm`。
 
-**服务端更新** —— 面板能查当前 buildid，也能触发 SteamCMD 更新。实际动作交给宿主机的 systemd helper 做：先停服、再更新、再拉起来，不会卡在半路。
+- **自动扫描**：点一下扫描，面板会从宿主机找出所有 L4D2 服务端进程，自动过滤掉面板自己的辅助服务。
+- **一键接管**：选一个候选，起个名字就纳管了。接管不改动正在跑的进程。
+- **统一控制**：接管后启停、重启、看日志、看状态、跑诊断、更新服务端、修插件，全部走同一套链路。
+- **迁移**：可以把 systemd 的服务迁到 screen，或者反过来。面板先给迁移计划，确认后才执行。
+- **不强制**：老部署升级上来什么都不用动，行为和以前完全一样。只有你主动接管，才会切到新链路。
 
-**SourceTV** —— 内置 `shqke/sourcetvsupport` 的 SourceMod 1.12 文件，Linux 和 Windows 都有。一键装完会顺手配好 `-hltv`、`+tv_enable 1`、`+tv_port 27021`。
+实现方式是面板写任务文件，宿主机上的 Python Agent 收到后执行。Agent 通过 systemd path unit 触发，不常驻，不占端口。
 
-**Steam API Key** —— 在「系统管理 → 玩家统计设置」里填，存完立刻生效，不用重启。面板只回脱敏后的值。设了环境变量 `STEAM_API_KEY` 的话，以环境变量为准。
+### 检查更新不再卡死
 
-**玩家名** —— 把 `<#RGB>`、`<#RGBA>`、`<#RRGGBB>`、`<#RRGGBBAA>` 这类颜色标记，还有控制字符和零宽字符都滤掉。首页、在线列表、玩家统计里看到的都是干净名字。
+之前点「检查更新」经常失败。原因是 SteamCMD 客户端自更新（约 36 MB）和版本查询共用了一个 180 秒超时，慢速网络下自更新永远拉不完，每次都在 17% 被杀掉，下次又从 0% 开始，形成永久失败循环。
 
-**首页入口卡片** —— 显示当前真实端口，给一条能直接复制的 `connect IP:端口`，外加 `steam://connect/...` 一键进服。
+现在拆成两段：自更新 1200 秒、版本查询 180 秒，各自计时。检查日志也单独写 `l4d2-check.log`，不会再和游戏本体的更新日志混在一起让人误判。
 
-**RCON** —— 原版多包响应会截断，长插件输出读不全。这里修好了，批量查状态也能拿到完整结果。
+### 参数一键选值
 
-**按钮和窄屏** —— Ant Design 图标和文字对齐了，启动项页和维护页在手机宽度下不会再挤成一团。
+服务器配置页和启动项弹窗里，参数的可选值现在能直接点。点一下就写进命令行，不用手打。数值型参数给了常用值按钮，也可以自己填。互斥处理好了，不会出现既选预设又填自定义的重复。
 
-## 启动诊断
+### 其他修复
 
-服务端起不来的时候，面板能直接告诉你为什么。
+- RCON 多包响应截断：长插件输出现在能完整读取。
+- 启动项端口：从 `+hostport`、`+port`、`-port` 里读，改端口不用同步改面板配置。
+- 玩家名净化：滤掉 `<#RRGGBB>` 颜色标记、控制字符、零宽字符，只影响显示层。
+- 窄屏和按钮对齐：维护页、启动项页在手机宽度下不再挤成一团。
 
-点「启动诊断」，它会去宿主机抓 systemd 状态、journal 日志、端口占用和磁盘余量，然后按优先级给结论：坏 VPK、端口被别的进程占了、工作目录不对、启动文件丢了或没有执行权限、OOM、崩溃后自拉起、段错误、权限不足、磁盘满、插件加载失败……
+## 快速开始
 
-坏 VPK 能直接处理。「隔离并热重载」把损坏的包挪到隔离目录，清掉 `addonlist`、`maplist` 里的引用，再用 RCON 让服务端重新加载地图，不用重启。想彻底重来就用「隔离并重启」。端口被占的话有「终止占用并重启」，先 SIGTERM 再 SIGKILL，只杀非 `srcds` 的进程。
-
-每次处置都写进 `data/repair-history.jsonl`，面板的「处置记录」能看到最近 20 条，包括动了哪些文件、清了哪些引用、复检还剩几个坏包。
-
-## 环境要求
-
-- Docker Engine 或 Docker Desktop
-- Docker Compose v2
-- 要用启动项维护和服务端更新，宿主机得是带 systemd 的 Linux
-- 至少留 20 GB 空间，游戏镜像本身就不小
-
-## 最简部署：管理已有游戏服
+### 只装面板，管已有的游戏服
 
 ```bash
 mkdir -p /opt/l4d2-manager/{control,data,plugins}
@@ -63,29 +56,26 @@ docker run -d \
   --restart unless-stopped \
   --network host \
   -e L4D2_MANAGER_PORT=27020 \
-  -e L4D2_MANAGER_PASSWORD='请替换为强密码' \
+  -e L4D2_MANAGER_PASSWORD='换成强密码' \
   -e L4D2_GAME_PATH=/left4dead2 \
   -e L4D2_PLUGIN_STORE_PATH=/plugins \
   -e L4D2_RCON_URL=127.0.0.1:27015 \
-  -e L4D2_RCON_PASSWORD='请替换为RCON强密码' \
+  -e L4D2_RCON_PASSWORD='换成RCON密码' \
   -v /path/to/your/left4dead2:/left4dead2 \
   -v /opt/l4d2-manager/control:/control \
   -v /opt/l4d2-manager/data:/data \
   -v /opt/l4d2-manager/plugins:/plugins \
   -v /proc:/host/proc:ro \
+  -v /run/systemd/system:/host/systemd:ro \
   -v /var/run/docker.sock:/var/run/docker.sock \
   soloxiaoye2022/l4d2-manager-next:latest
 ```
 
-然后打开：
+打开 `http://服务器IP:27020`，用 `L4D2_MANAGER_PASSWORD` 登录。
 
-```text
-http://服务器IP:27020
-```
+`L4D2_RCON_PASSWORD` 必须和游戏服 `server.cfg` 里的 `rcon_password` 一致。
 
-用 `L4D2_MANAGER_PASSWORD` 登录。RCON 密码得和游戏服 `server.cfg` 里的 `rcon_password` 一致，不然连不上。
-
-## 一键部署游戏服和管理器
+### 面板 + 游戏服一起装
 
 ```yaml
 services:
@@ -98,7 +88,7 @@ services:
       L4D2_PORT: "27015"
       L4D2_TICK: "100"
       L4D2_VAC: "false"
-      L4D2_RCON_PASSWORD: "请替换为RCON强密码"
+      L4D2_RCON_PASSWORD: "换成RCON密码"
     volumes:
       - l4d2_game:/l4d2
 
@@ -114,11 +104,11 @@ services:
       - l4d2
     environment:
       L4D2_MANAGER_PORT: "27020"
-      L4D2_MANAGER_PASSWORD: "请替换为面板强密码"
+      L4D2_MANAGER_PASSWORD: "换成面板密码"
       L4D2_GAME_PATH: "/l4d2/left4dead2"
       L4D2_PLUGIN_STORE_PATH: "/plugins"
       L4D2_RCON_URL: "127.0.0.1:27015"
-      L4D2_RCON_PASSWORD: "请替换为RCON强密码"
+      L4D2_RCON_PASSWORD: "换成RCON密码"
       L4D2_RESTART_CMD: "docker restart l4d2"
       L4D2_RESTART_BY_RCON: "false"
     volumes:
@@ -127,6 +117,7 @@ services:
       - l4d2_manager_data:/data
       - l4d2_manager_plugins:/plugins
       - /proc:/host/proc:ro
+      - /run/systemd/system:/host/systemd:ro
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
@@ -136,9 +127,9 @@ volumes:
   l4d2_manager_plugins:
 ```
 
-`L4D2_GAME_PATH` 要指向真正的 `left4dead2` 目录，填游戏根目录不行。
+`L4D2_GAME_PATH` 要指向 `left4dead2` 目录本身，不是游戏根目录。
 
-如果用宿主机目录挂载，面板容器的 UID/GID 得和目录属主对上，否则面板写出来的文件会变成 root 所有：
+用宿主机目录挂载时，容器 UID/GID 得和目录属主对上，否则面板写出来的文件会归 root：
 
 ```bash
 export L4D2_MANAGER_UID="$(id -u)"
@@ -146,89 +137,76 @@ export L4D2_MANAGER_GID="$(id -g)"
 export DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 ```
 
-面板要通过 `/var/run/docker.sock` 控制游戏容器的话，还得把 socket 的组 ID 加进 `group_add`。之前已经被写成 root 的目录，用 `chown -R "$(id -u):$(id -g)" /path/to/left4dead2` 修回来。
+已经写成 root 的目录用 `chown -R "$(id -u):$(id -g)" /path/to/left4dead2` 修回来。
 
-## 启用启动项维护与服务端更新
+## 启用运行时管理与服务端更新
 
-管理器镜像的 `/manager-systemd` 里带着 helper 文件。Linux 宿主机要把它们装进 systemd：
+这两个功能要在宿主机装 helper。面板镜像里已经带好文件，复制出去就行：
 
 ```bash
-mkdir -p /opt/l4d2-manager/{control,data,plugins}
+mkdir -p /opt/l4d2-manager/control/runtime/{requests,results,processed}
 
-docker create --name l4d2-manager-helper soloxiaoye2022/l4d2-manager-next:latest
-docker cp l4d2-manager-helper:/manager-systemd/apply-startup.sh /opt/l4d2-manager/
-docker cp l4d2-manager-helper:/manager-systemd/run-maintenance.sh /opt/l4d2-manager/
-docker cp l4d2-manager-helper:/manager-systemd/l4d2-startup.path /etc/systemd/system/
-docker cp l4d2-manager-helper:/manager-systemd/l4d2-startup.service /etc/systemd/system/
-docker cp l4d2-manager-helper:/manager-systemd/l4d2-maintenance.path /etc/systemd/system/
-docker cp l4d2-manager-helper:/manager-systemd/l4d2-maintenance.service /etc/systemd/system/
-docker rm l4d2-manager-helper
+docker create --name l4d2-helper soloxiaoye2022/l4d2-manager-next:latest
+docker cp l4d2-helper:/manager-systemd/apply-startup.sh /opt/l4d2-manager/
+docker cp l4d2-helper:/manager-systemd/run-maintenance.sh /opt/l4d2-manager/
+docker cp l4d2-helper:/manager-systemd/repair-addons.sh /opt/l4d2-manager/
+docker cp l4d2-helper:/manager-systemd/runtime-control.sh /opt/l4d2-manager/
+docker cp l4d2-helper:/manager-runtime-agent/. /opt/l4d2-manager/runtime-agent/
+docker cp l4d2-helper:/manager-systemd/l4d2-startup.path /etc/systemd/system/
+docker cp l4d2-helper:/manager-systemd/l4d2-startup.service /etc/systemd/system/
+docker cp l4d2-helper:/manager-systemd/l4d2-maintenance.path /etc/systemd/system/
+docker cp l4d2-helper:/manager-systemd/l4d2-maintenance.service /etc/systemd/system/
+docker cp l4d2-helper:/manager-systemd/l4d2-repair.path /etc/systemd/system/
+docker cp l4d2-helper:/manager-systemd/l4d2-repair.service /etc/systemd/system/
+docker cp l4d2-helper:/manager-systemd/l4d2-runtime.path /etc/systemd/system/
+docker cp l4d2-helper:/manager-systemd/l4d2-runtime.service /etc/systemd/system/
+docker rm l4d2-helper
 
-chmod +x /opt/l4d2-manager/apply-startup.sh /opt/l4d2-manager/run-maintenance.sh
+chmod +x /opt/l4d2-manager/*.sh /opt/l4d2-manager/runtime-agent/l4d2_runtime_agent.py
 systemctl daemon-reload
-systemctl enable --now l4d2-startup.path l4d2-maintenance.path
+systemctl enable --now l4d2-startup.path l4d2-maintenance.path l4d2-repair.path l4d2-runtime.path
 ```
 
-启动项保存的是 `/opt/l4d2-manager/control/l4d2.service` 这份快照。`l4d2-startup.path` 发现它变了，会先校验，再装到 `/etc/systemd/system/l4d2.service`。
+需要 `python3`。没有 python3 的话运行时 Agent 装不了，面板会退回原来的 systemd 链路，其他功能不受影响。
 
-服务端更新不是容器直接跑的。容器只写一份请求，宿主机的 helper 收到后调 SteamCMD：
+工作方式：面板只写请求文件，helper 收到后执行，结果写回同一目录。
 
 ```text
 /opt/l4d2-manager/control/maintenance-request.json
 /opt/l4d2-manager/control/maintenance-result.json
 /opt/l4d2-manager/control/l4d2-update.log
+/opt/l4d2-manager/control/l4d2-check.log
+/opt/l4d2-manager/control/runtime/requests/
 ```
 
-## RCON 端口从哪来
+## 环境变量
 
-管理器保留 `L4D2_RCON_URL` 里的主机名，端口按这个顺序找：
+| 变量 | 说明 |
+|---|---|
+| `L4D2_MANAGER_PORT` | 面板端口，默认 `27020` |
+| `L4D2_MANAGER_PASSWORD` | 管理员密码，生产必改 |
+| `L4D2_GAME_PATH` | `left4dead2` 目录 |
+| `L4D2_RCON_URL` | RCON 地址，如 `127.0.0.1:27015` |
+| `L4D2_RCON_PASSWORD` | RCON 密码 |
+| `L4D2_PLUGIN_STORE_PATH` | 插件库路径，默认 `/plugins` |
+| `L4D2_RESTART_CMD` | 重启命令，如 `docker restart l4d2` |
+| `L4D2_RESTART_BY_RCON` | 设为 `true` 时优先用 RCON 退出触发自拉起 |
+| `L4D2_HOST_SYSTEMD_DIR` | 容器内看到的 systemd 目录，挂载 `/run/systemd/system` 时设为 `/host/systemd` |
+| `L4D2_RUNTIME_USER` | 迁移/新建运行时默认用户，默认 `ubuntu` |
+| `STEAM_API_KEY` | 玩家游戏时长查询用，可选 |
 
-1. `L4D2_RCON_PORT`
-2. `L4D2_PORT`
-3. 启动项里的 `+hostport`、`+port` 或 `-port`
-4. `L4D2_RCON_URL` 自带的端口
+RCON 端口优先级：`L4D2_RCON_PORT` → `L4D2_PORT` → 启动项里的 `+hostport`/`+port`/`-port` → `L4D2_RCON_URL` 自带端口。
 
-启动项路径这两个变量也认：
+## 数据目录
 
-- `L4D2_STARTUP_UNIT_PATH`
-- `L4D2_SERVER_UNIT_FILE`
+| 路径 | 内容 |
+|---|---|
+| `/data` | 授权、监控、玩家统计、审计、面板配置 |
+| `/plugins` | 插件列表和文件 |
+| `/control` | 启动项快照、更新请求与结果、运行时任务 |
+| `/left4dead2` | 游戏服务端 |
 
-## Steam API Key
-
-位置：
-
-```text
-系统管理 → 玩家统计设置 → Steam API 密钥
-```
-
-填 32 位十六进制 Key。没有的话去这儿申请：
-
-```text
-https://steamcommunity.com/dev/apikey
-```
-
-环境变量 `STEAM_API_KEY` 比面板里存的值优先。面板 API 只返回脱敏后的 Key。
-
-## 玩家名过滤
-
-管理器这边只做显示层清理，不动 SteamID、统计数据和封禁记录。要在游戏里也统一干净，得装插件包 `自选-玩家名字净化(v1.3.0)(Local)`，它会在游戏服侧拦掉带颜色标记的客户端名，再回写成看得见的名字。只部署管理器的话，游戏内 HUD 和聊天还是原样。
-
-## SourceTV
-
-在「服务端维护」页可以检测并安装内置的 `sourcetvsupport`。端口建议 `27021`，别和面板的 `27020` 撞。
-
-装完要重启游戏服才会加载 SourceMod extension。上游目前仍把 SourceTV 中继标为不完整，这个镜像只提供直连观战端口和一键配好启动参数。
-
-## 数据持久化
-
-这几个目录留着：
-
-- `/data` —— 授权、监控、玩家统计、审计、管理器配置
-- `/plugins` —— 插件列表和插件文件
-- `/control` —— 启动项快照、更新请求和结果
-- `/left4dead2` —— 游戏服务端
-
-升级镜像之前先备份。
+升级镜像前先备份这几个目录。
 
 ## 更新
 
@@ -237,28 +215,27 @@ docker pull soloxiaoye2022/l4d2-manager-next:latest
 docker compose up -d --force-recreate l4d2-manager
 ```
 
-改完启动项，面板只会重载 systemd 定义，不会自动重启游戏服。要马上生效就点「重启游戏服」。
+改完启动项只重载 systemd 定义，不会自动重启游戏服。要立刻生效就点「重启游戏服」。
 
-## 安全说明
+## 注意事项
 
-- 示例里的密码全部换掉。
-- RCON 密码、Steam API Key、面板密码别写进公开配置或仓库。
-- `/var/run/docker.sock` 相当于宿主机高权限，只挂给信得过的容器。
-- 面板默认 `27020`，别和 SourceTV `27021` 或游戏端口冲突。
-- 对外暴露面板之前，最好套一层 HTTPS 反代加访问控制。
+- 示例里的密码全部换掉。RCON 密码、Steam API Key、面板密码别写进公开配置。
+- `/var/run/docker.sock` 等于宿主机高权限，只挂给信得过的容器。
+- 面板默认 27020，别和 SourceTV 的 27021 或游戏端口撞。
+- 对外暴露面板前，套一层 HTTPS 反代加访问控制。
+- Docker 29.3 以上跑 32 位 `srcds` 需要 `security_opt: seccomp:unconfined`。
 
-## 验证
+## 排查
 
 ```bash
-docker version
-docker compose config
 docker logs --tail 200 l4d2-manager
 curl -I http://127.0.0.1:27020
+systemctl status l4d2-runtime.path
 ```
 
-面板首页应该能看到：
+面板里点「启动诊断」会抓 systemd 状态、journal 日志、端口占用、磁盘余量，然后按优先级给结论：坏 VPK、端口被占、工作目录不对、启动文件没执行权限、OOM、段错误、磁盘满、插件加载失败。坏 VPK 能直接「隔离并热重载」，不用重启。
 
-- 服务器名称、地图、难度、游戏模式
-- 真实的游戏端口
-- `connect IP:端口`
-- 在线列表里干净的名字
+---
+
+文档：[l4d2-manage-docs.laoyutang.cn](https://l4d2-manage-docs.laoyutang.cn/)
+源码：[github.com/LaoYutang/l4d2-server-next](https://github.com/LaoYutang/l4d2-server-next)

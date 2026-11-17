@@ -68,18 +68,20 @@ func maintenanceResultPath() string {
 }
 
 func GetServerMaintenanceStatus() (ServerMaintenanceStatus, error) {
-	startup, err := GetServerStartupConfig()
-	if err != nil {
-		return ServerMaintenanceStatus{}, err
-	}
+	steamDir, installDir, serviceName, targetErr := resolveMaintenanceTarget()
 	status := ServerMaintenanceStatus{
 		Status:           "idle",
 		Message:          "尚未检查更新",
-		SteamDirectory:   dirOfPathStyle(startup.WorkingDirectory),
-		InstallDirectory: startup.WorkingDirectory,
-		ServiceName:      startup.ServiceName,
+		SteamDirectory:   steamDir,
+		InstallDirectory: installDir,
+		ServiceName:      serviceName,
 	}
-	if startup.WorkingDirectory == "" {
+	if targetErr != nil {
+		// 没有任何可用的安装目录：状态页仍要能打开，只是提示未配置。
+		status.Message = targetErr.Error()
+		return status, nil
+	}
+	if installDir == "" {
 		return status, nil
 	}
 
@@ -121,24 +123,57 @@ func GetServerMaintenanceStatus() (ServerMaintenanceStatus, error) {
 	return status, nil
 }
 
+// resolveMaintenanceTarget 解析维护任务需要的三个路径。
+//
+// 顺序很重要：
+//  1. 有托管运行时 → 用运行时规格里的工作目录。接管 screen / tmux / docker
+//     之后宿主机上根本没有 systemd unit，旧逻辑会直接报"安装目录不可用"（D4）。
+//  2. 没有运行时 → 回退旧的启动项解析，保证老部署行为不变。
+func resolveMaintenanceTarget() (steamDir string, installDir string, serviceName string, err error) {
+	if item, ok := activeRuntime(); ok {
+		workingDir := strings.TrimSpace(item.Spec.WorkingDir)
+		if workingDir == "" {
+			workingDir = strings.TrimSpace(item.GamePath)
+		}
+		if workingDir != "" {
+			serviceName = runtimeServiceLabel(item)
+			if item.Target.UnitName != "" {
+				serviceName = item.Target.UnitName
+			}
+			return dirOfPathStyle(workingDir), workingDir, serviceName, nil
+		}
+	}
+
+	startup, startupErr := GetServerStartupConfig()
+	if startupErr != nil {
+		return "", "", "", startupErr
+	}
+	if !startup.Available || startup.WorkingDirectory == "" {
+		return "", "", "", fmt.Errorf("启动项中的游戏安装目录不可用")
+	}
+	return dirOfPathStyle(startup.WorkingDirectory), startup.WorkingDirectory, startup.ServiceName, nil
+}
+
 func RequestServerMaintenance(action string) (ServerMaintenanceStatus, error) {
 	if action != MaintenanceActionCheck && action != MaintenanceActionUpdate {
 		return ServerMaintenanceStatus{}, fmt.Errorf("不支持的维护操作")
 	}
-	startup, err := GetServerStartupConfig()
+	steamDir, installDir, serviceName, err := resolveMaintenanceTarget()
 	if err != nil {
 		return ServerMaintenanceStatus{}, err
-	}
-	if !startup.Available || startup.WorkingDirectory == "" {
-		return ServerMaintenanceStatus{}, fmt.Errorf("启动项中的游戏安装目录不可用")
 	}
 	request := MaintenanceRequest{
 		RequestID:   uuid.NewString(),
 		Action:      action,
-		SteamDir:    dirOfPathStyle(startup.WorkingDirectory),
-		InstallDir:  startup.WorkingDirectory,
-		ServiceName: startup.ServiceName,
+		SteamDir:    steamDir,
+		InstallDir:  installDir,
+		ServiceName: serviceName,
 		RequestedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	// 修复 D4：先把"当前运行时"快照写给宿主机脚本。
+	// 脚本据此调用 runtime-agent 启停，而不是硬编码 systemctl。
+	if _, err := WriteRuntimeControlSnapshot(); err != nil {
+		return ServerMaintenanceStatus{}, err
 	}
 	data, err := json.MarshalIndent(request, "", "  ")
 	if err != nil {

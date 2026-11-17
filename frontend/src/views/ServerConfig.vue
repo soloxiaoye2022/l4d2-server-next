@@ -143,6 +143,9 @@
                     v-if="getCustomEntryDefinition(item.entry.command)"
                     class="mt-3"
                     :definition="getCustomEntryDefinition(item.entry.command)"
+                    :selectable="isAdmin && !hasTrailingComments"
+                    :selected-value="parseCvarCommand(item.entry.command)?.value ?? ''"
+                    @select="(value) => applyCvarValueToEntry(item.index, value)"
                   />
                   <div
                     v-else
@@ -358,7 +361,7 @@
                   ? 'border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/30'
                   : 'border-transparent hover:border-gray-200 hover:bg-gray-50 dark:hover:border-gray-700 dark:hover:bg-gray-900',
               ]"
-              @click="selectedLibraryCvar = definition"
+              @click="selectLibraryCvar(definition)"
             >
               <div class="flex flex-wrap items-center gap-2">
                 <span class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ definition.displayName }}</span>
@@ -374,15 +377,21 @@
         </div>
 
         <div class="flex min-h-[300px] flex-col">
-          <CvarDefinitionDetails v-if="selectedLibraryCvar" :definition="selectedLibraryCvar" />
+          <CvarDefinitionDetails
+            v-if="selectedLibraryCvar"
+            :definition="selectedLibraryCvar"
+            :selectable="isAdmin"
+            :selected-value="librarySelectedValue"
+            @select="(value) => (librarySelectedValue = value)"
+          />
           <div v-else class="flex flex-1 items-center justify-center rounded-lg border border-dashed border-gray-300 text-sm text-gray-500 dark:border-gray-700">
             从左侧选择一个参数查看说明
           </div>
           <div v-if="selectedLibraryCvar" class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
             <p class="text-xs leading-5 text-gray-500 dark:text-gray-400">
-              添加后仍可在参数行中直接修改值；保存配置后会写入服务器 cfg。
+              {{ librarySelectionHint }}
             </p>
-            <a-button type="primary" @click="addCatalogEntry(selectedLibraryCvar)">
+            <a-button type="primary" :disabled="!isAdmin" @click="addCatalogEntry(selectedLibraryCvar)">
               <template #icon><PlusOutlined /></template>
               添加到自定义参数
             </a-button>
@@ -436,6 +445,15 @@
   const cvarLibrarySearch = ref('');
   const cvarLibraryCategory = ref<'全部' | CvarCategory>('全部');
   const selectedLibraryCvar = ref<L4D2CvarDefinition | null>(null);
+  /** 参数库弹窗中用户点选的取值，添加时写入命令行。 */
+  const librarySelectedValue = ref('');
+  const librarySelectionHint = computed(() => {
+    if (!isAdmin.value) return '当前为只读模式，无法添加参数。';
+    if (librarySelectedValue.value) {
+      return `将添加：${selectedLibraryCvar.value?.name ?? ''} = ${librarySelectedValue.value}`;
+    }
+    return '点选上方取值后添加，会直接使用选中的值；未选择时使用默认示例值。';
+  });
   const customTextSource = ref('');
   const trailingComments = ref<string[]>([]);
   const trailingStartLine = ref(0);
@@ -459,9 +477,32 @@
   });
   const openCvarLibrary = () => {
     if (!selectedLibraryCvar.value) {
-      selectedLibraryCvar.value = filteredCvarCatalog.value[0] ?? null;
+      selectLibraryCvar(filteredCvarCatalog.value[0] ?? null);
     }
     cvarLibraryOpen.value = true;
+  };
+  /** 用参数名 + 新值重建命令行，保留原有的 sm_cvar 前缀写法。 */
+  const buildCvarCommand = (baseCommand: string, value: string) => {
+    const parsed = parseCvarCommand(baseCommand);
+    const trimmed = value.trim();
+    if (!parsed || !trimmed) return baseCommand;
+    const prefix = baseCommand.trim().toLowerCase().startsWith('sm_cvar') ? 'sm_cvar ' : '';
+    return `${prefix}${parsed.name} ${trimmed}`;
+  };
+  const selectLibraryCvar = (definition: L4D2CvarDefinition | null) => {
+    selectedLibraryCvar.value = definition;
+    librarySelectedValue.value = definition ? (parseCvarCommand(definition.exampleCommand)?.value ?? '') : '';
+  };
+  /** 行内详情点选取值后，直接改写这条自定义参数的命令行。 */
+  const applyCvarValueToEntry = (index: number, value: string) => {
+    if (!isAdmin.value || hasTrailingComments.value) return;
+    const entry = customEntries.value[index];
+    if (!entry) return;
+    const next = buildCvarCommand(entry.command, value);
+    if (next === entry.command) return;
+    entry.command = next;
+    syncTextSourceFromEntries();
+    message.success(`已改为 ${next}，别忘了点右上角“保存修改”`);
   };
   const filteredCustomEntries = computed(() => {
     const query = customSearch.value.trim().toLocaleLowerCase();
@@ -484,13 +525,15 @@
       message.info(`${definition.name} 已经在自定义参数中`);
       return;
     }
+    const command = buildCvarCommand(definition.exampleCommand, librarySelectedValue.value);
     customEntries.value.push({
       id: `catalog-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       comments: [`参数：${definition.displayName}`, `说明：${definition.description}`, `来源：${definition.source}`],
-      command: definition.exampleCommand,
+      command,
     });
     cvarLibraryOpen.value = false;
-    message.success(`已添加 ${definition.name}，请按需修改数值后保存`);
+    syncTextSourceFromEntries();
+    message.success(`已添加 ${command}，点“保存修改”后写入 cfg`);
   };
   const trailingCommentMessage = computed(
     () =>

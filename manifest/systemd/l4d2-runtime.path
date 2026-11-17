@@ -1,0 +1,9 @@
+[Unit]
+Description=L4D2 运行时 Agent 触发（监听面板任务请求）
+
+[Path]
+PathExistsGlob=/opt/l4d2-manager/control/runtime/requests/*.json
+Unit=l4d2-runtime.service
+
+[Install]
+WantedBy=multi-user.target

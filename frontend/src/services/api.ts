@@ -58,6 +58,11 @@ export interface PlatformCapabilities {
   default_game_path: string;
   default_control_dir: string;
   startup_config_kind: 'systemd' | 'batch';
+  agent_mode?: 'bridge' | 'local' | 'disabled' | 'unknown';
+  runtime_kinds?: string[];
+  default_runtime_id?: string;
+  runtime_management?: boolean;
+  runtime_detection?: boolean;
 }
 
 export interface ServerDiagnosticHint {
@@ -2554,6 +2559,262 @@ class ApiService {
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }
+
+  // ── 多运行时适配框架 ─────────────────────────────────────────────
+  // 读接口用 GET（无需请求体），写接口用 postJson，与后端 ShouldBindJSON 对齐。
+
+  async getRuntimeList(): Promise<RuntimeListResult> {
+    const response = await this.get('/runtime/list');
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async getRuntime(id: string): Promise<{ runtime: RuntimeDescriptor; events: RuntimeEvent[] }> {
+    const response = await this.get('/runtime/get', { id });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async getRuntimeStatus(id: string): Promise<{ status: RuntimeHealth; state_text: string }> {
+    const response = await this.get('/runtime/status', { id });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async getRuntimeLogs(id: string, tail = 200): Promise<{ lines: string[]; source: string }> {
+    const response = await this.get('/runtime/logs', { id, tail });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async getRuntimeEvents(id = '', limit = 50): Promise<{ events: RuntimeEvent[] }> {
+    const response = await this.get('/runtime/events', { id, limit });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async runtimeAction(id: string, action: 'start' | 'stop' | 'restart'): Promise<RuntimeJobResult> {
+    const response = await this.postJson('/runtime/action', { id, action });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async detectRuntimes(): Promise<RuntimeDetectResult> {
+    const response = await this.postJson('/runtime/detect', {});
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async adoptRuntime(params: { candidate_key: string; id: string; name?: string }): Promise<RuntimeDescriptor> {
+    const response = await this.postJson('/runtime/adopt', params);
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async detachRuntime(id: string): Promise<{ message: string }> {
+    const response = await this.postJson('/runtime/detach', { id });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async createRuntime(payload: Partial<RuntimeDescriptor>): Promise<RuntimeDescriptor> {
+    const response = await this.postJson('/runtime/create', payload);
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async updateRuntime(payload: {
+    id: string;
+    name?: string;
+    spec?: RuntimeLaunchSpec;
+    enabled?: boolean;
+  }): Promise<RuntimeDescriptor> {
+    const response = await this.postJson('/runtime/update', payload);
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async deleteRuntime(id: string, mode: 'detach' | 'archive' = 'detach'): Promise<{ message: string }> {
+    const response = await this.postJson('/runtime/delete', { id, mode });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async planRuntimeMigration(payload: {
+    source_id: string;
+    target_kind: string;
+    options?: RuntimeMigrationOptions;
+  }): Promise<RuntimeMigrationPlan> {
+    const response = await this.postJson('/runtime/migrate/plan', {
+      source_id: payload.source_id,
+      target_kind: payload.target_kind,
+      options: payload.options ?? {},
+    });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+
+  async applyRuntimeMigration(token: string): Promise<RuntimeJobResult> {
+    const response = await this.postJson('/runtime/migrate/apply', { token });
+    if (!response.ok) throw new Error(await this.readErrorMessage(response));
+    return response.json();
+  }
+}
+
+export type RuntimeKind =
+  | 'systemd'
+  | 'systemd-user'
+  | 'docker'
+  | 'screen'
+  | 'tmux'
+  | 'nohup'
+  | 'bare'
+  | 'mcsm'
+  | 'lgsm';
+
+export interface RuntimeLaunchSpec {
+  working_dir: string;
+  executable: string;
+  args: string[];
+  env?: Record<string, string>;
+  user?: string;
+  port: number;
+  rcon_address?: string;
+  rcon_password_ref?: string;
+  auto_restart: boolean;
+  stop_signal?: string;
+  log_path?: string;
+}
+
+export interface RuntimeTarget {
+  unit_name?: string;
+  unit_path?: string;
+  scope?: string;
+  container_name?: string;
+  compose_file?: string;
+  compose_service?: string;
+  session_name?: string;
+  pid_file?: string;
+  mcsm_node_url?: string;
+  mcsm_instance?: string;
+  lgsm_script?: string;
+}
+
+export interface RuntimeCapabilities {
+  can_start: boolean;
+  can_stop: boolean;
+  can_restart: boolean;
+  can_write_spec: boolean;
+  can_logs: boolean;
+  can_adopt: boolean;
+  needs_root: boolean;
+  persistent: boolean;
+}
+
+export interface RuntimeHealth {
+  checked_at: string;
+  state: string;
+  pid?: number;
+  port_listening: boolean;
+  port_owners?: Array<{ command: string; pid: number }>;
+  rcon_reachable: boolean;
+  rcon_error?: string;
+  log_tail?: string;
+  reason?: string;
+  source?: string;
+}
+
+export interface RuntimeDescriptor {
+  id: string;
+  name: string;
+  kind: RuntimeKind;
+  enabled: boolean;
+  adopted: boolean;
+  managed: boolean;
+  target: RuntimeTarget;
+  spec: RuntimeLaunchSpec;
+  game_path: string;
+  real_path?: string;
+  labels?: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+  last_health?: RuntimeHealth;
+  origin: string;
+  archive_at?: string;
+  capabilities: RuntimeCapabilities;
+}
+
+export interface RuntimeEvent {
+  at: string;
+  runtime_id: string;
+  kind: string;
+  state: string;
+  message?: string;
+}
+
+export interface RuntimeListResult {
+  runtimes: RuntimeDescriptor[];
+  default_id: string;
+  agent_mode: 'bridge' | 'local' | 'disabled';
+  capabilities: Record<string, RuntimeCapabilities>;
+  warnings?: string[];
+}
+
+export interface RuntimeDiscoveryCandidate {
+  key: string;
+  kind: RuntimeKind;
+  name: string;
+  confidence: number;
+  running: boolean;
+  pid?: number;
+  user?: string;
+  spec: RuntimeLaunchSpec;
+  target: RuntimeTarget;
+  game_path: string;
+  port: number;
+  persistence: string;
+  evidence: string[];
+  adoptable: boolean;
+  reason?: string;
+  already_runtime_id?: string;
+}
+
+export interface RuntimeDetectResult {
+  candidates: RuntimeDiscoveryCandidate[];
+  scanned_at: string;
+  warnings: string[];
+}
+
+export interface RuntimeJobResult {
+  job_id: string;
+  action: string;
+  status: string;
+  message?: string;
+  data?: Record<string, unknown>;
+  started_at?: string;
+  finished_at?: string;
+  agent_version?: string;
+}
+
+export interface RuntimeMigrationOptions {
+  id?: string;
+  name?: string;
+  session_name?: string;
+  unit_name?: string;
+  container_name?: string;
+  log_path?: string;
+}
+
+export interface RuntimeMigrationPlan {
+  token: string;
+  source_id: string;
+  source_kind: RuntimeKind;
+  target_id: string;
+  target_kind: RuntimeKind;
+  steps: string[];
+  risks: string[];
+  blockers: string[];
+  generated_at: string;
 }
 
 export const api = new ApiService();

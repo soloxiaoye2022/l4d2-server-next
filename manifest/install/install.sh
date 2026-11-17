@@ -43,6 +43,10 @@ L4D2_RCON_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
 
 docker_gid=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
 mkdir -p /data/l4d2
+# 运行时 Agent 的控制目录必须由面板用户（1000:1001）可写，
+# 否则面板写不进 requests/，agent_mode 会退化为 disabled。
+mkdir -p /opt/l4d2-manager/control
+chown -R 1000:1001 /opt/l4d2-manager/control 2>/dev/null || true
 # 写入docker-compose文件
 cat > /data/l4d2/docker-compose.yaml << EOF
 volumes:
@@ -91,8 +95,10 @@ services:
       - l4d2-data:/left4dead2
       - l4d2-plugins:/plugins
       - l4d2-manager-data:/data
+      - /opt/l4d2-manager/control:/control
       - /var/run/docker.sock:/var/run/docker.sock
       - /proc:/host/proc:ro
+      - /run/systemd/system:/host/systemd:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     environment:
@@ -101,6 +107,8 @@ services:
       - L4D2_RCON_PASSWORD=$L4D2_RCON_PASSWORD
       - L4D2_RCON_URL=l4d2:$game_port
       - L4D2_GAME_PATH=/left4dead2
+      - L4D2_CONTROL_DIR=/control
+      - L4D2_HOST_SYSTEMD_DIR=/host/systemd
       - STEAM_API_KEY=$steam_api_key
     networks:
       - l4d2-network
@@ -132,6 +140,50 @@ docker compose up -d
 # 增加软连接
 ln -sf /var/lib/docker/volumes/l4d2_l4d2-data/_data/addons ./addons
 ln -sf /var/lib/docker/volumes/l4d2_l4d2-data/_data/cfg ./cfg
+
+# 安装宿主机运行时 Agent（可选，但只有装了才能接管 systemd/screen/tmux 等非 Docker 部署）
+install_runtime_agent() {
+  if ! command -v systemctl > /dev/null 2>&1; then
+    echo "未检测到 systemd，跳过运行时 Agent 安装（面板将使用本地降级模式）。"
+    return 0
+  fi
+  if ! command -v python3 > /dev/null 2>&1; then
+    echo "未检测到 python3，跳过运行时 Agent 安装。"
+    return 0
+  fi
+
+  local container="l4d2-manager-runtime-agent-extract"
+  # 镜像名必须从运行中的管理器容器读取：用户可能选了国内镜像源，
+  # 写死 laoyutang/... 会拿到不存在的镜像。
+  local manager_image
+  manager_image=$(docker inspect l4d2-manager --format '{{.Config.Image}}' 2> /dev/null)
+  if [ -z "$manager_image" ]; then
+    manager_image="laoyutang/l4d2-manager-next:latest"
+  fi
+  docker rm -f "$container" > /dev/null 2>&1 || true
+  if ! docker create --name "$container" "$manager_image" > /dev/null 2>&1; then
+    echo "无法从镜像提取运行时 Agent，请手动安装。"
+    return 0
+  fi
+  mkdir -p /opt/l4d2-manager/runtime-agent
+  docker cp "$container:/manager-runtime-agent/." /opt/l4d2-manager/runtime-agent/ > /dev/null 2>&1 || true
+  docker cp "$container:/manager-systemd/l4d2-runtime.path" /etc/systemd/system/ > /dev/null 2>&1 || true
+  docker cp "$container:/manager-systemd/l4d2-runtime.service" /etc/systemd/system/ > /dev/null 2>&1 || true
+  # 维护/修复脚本要调这个分发器，缺了就会退回 systemctl（D4）。
+  docker cp "$container:/manager-systemd/runtime-control.sh" /opt/l4d2-manager/ > /dev/null 2>&1 || true
+  docker rm -f "$container" > /dev/null 2>&1 || true
+
+  chmod +x /opt/l4d2-manager/runtime-agent/l4d2_runtime_agent.py 2>/dev/null || true
+  chmod +x /opt/l4d2-manager/runtime-control.sh 2>/dev/null || true
+  mkdir -p /opt/l4d2-manager/control/runtime/{requests,results,processed}
+  chown -R 1000:1001 /opt/l4d2-manager/control 2>/dev/null || true
+
+  systemctl daemon-reload
+  systemctl enable --now l4d2-runtime.path
+  echo "运行时 Agent 已安装：/opt/l4d2-manager/runtime-agent"
+}
+
+install_runtime_agent
 
 # 输出提示信息
 echo "L4D2 服务器和管理面板已安装并启动。"

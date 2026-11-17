@@ -383,6 +383,46 @@
                 <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
                   {{ definition.description }}
                 </p>
+                <div
+                  v-if="!isDefinitionAdded(definition.id) && definition.value"
+                  class="mt-2 flex flex-wrap items-center gap-1.5"
+                >
+                  <template v-if="definition.value.kind === 'select'">
+                    <button
+                      v-for="option in definition.value.options"
+                      :key="`${definition.id}-${option.value}`"
+                      type="button"
+                      :class="catalogChipClass(definition, option.value)"
+                      @click="pickCatalogValue(definition, option.value)"
+                    >
+                      <span>{{ option.label }}</span>
+                      <code class="ml-1 opacity-70">{{ option.value }}</code>
+                    </button>
+                  </template>
+                  <template v-else-if="definition.value.kind === 'number'">
+                    <button
+                      v-for="preset in catalogNumberPresets(definition)"
+                      :key="`${definition.id}-preset-${preset}`"
+                      type="button"
+                      :class="catalogChipClass(definition, preset)"
+                      @click="pickCatalogValue(definition, preset)"
+                    >
+                      <code>{{ preset }}</code>
+                    </button>
+                    <a-input
+                      size="small"
+                      class="w-28"
+                      :value="catalogCustomInput(definition)"
+                      :placeholder="`自定义 ${definition.value.min ?? ''} - ${definition.value.max ?? ''}`"
+                      @focus="enterCatalogCustom(definition)"
+                      @update:value="(value) => updateCatalogCustom(definition, value)"
+                    />
+                  </template>
+                  <span v-else class="text-xs text-gray-400">添加后可在此行直接填写</span>
+                  <span class="ml-1 text-[11px] text-gray-400">
+                    将添加：{{ catalogEffectiveValue(definition) || '空值' }}
+                  </span>
+                </div>
               </div>
               <a-button
                 v-if="isDefinitionAdded(definition.id) && definition.required"
@@ -769,14 +809,122 @@
   const isDefinitionAdded = (definitionId: string) =>
     entries.value.some((entry) => entry.definitionId === definitionId);
 
+  type CatalogValueMode = 'preset' | 'custom';
+  interface CatalogValueDraft {
+    mode: CatalogValueMode;
+    value: string;
+    custom: string;
+  }
+
+  /** 「选择启动项」弹窗内每个候选参数的取值草稿，key 为定义 id。 */
+  const catalogValueDrafts = reactive<Record<string, CatalogValueDraft>>({});
+
+  const ensureCatalogDraft = (definition: StartupOptionDefinition): CatalogValueDraft => {
+    const existing = catalogValueDrafts[definition.id];
+    if (existing) return existing;
+    const draft: CatalogValueDraft = {
+      mode: 'preset',
+      value: definition.value?.defaultValue ?? '',
+      custom: '',
+    };
+    catalogValueDrafts[definition.id] = draft;
+    return draft;
+  };
+
+  const resetCatalogDraft = (definition: StartupOptionDefinition) => {
+    catalogValueDrafts[definition.id] = {
+      mode: 'preset',
+      value: definition.value?.defaultValue ?? '',
+      custom: '',
+    };
+  };
+
+  /** 数值型启动项的预设值：优先用定义里的 presets，否则退化为默认值 + 上下限。 */
+  const catalogNumberPresets = (definition: StartupOptionDefinition): string[] => {
+    if (definition.value?.kind !== 'number') return [];
+    const configured = definition.value.presets ?? [];
+    if (configured.length) return configured;
+    const fallback = [definition.value.defaultValue, definition.value.min, definition.value.max]
+      .filter((item): item is number | string => item !== undefined && String(item).trim() !== '')
+      .map((item) => String(item));
+    return [...new Set(fallback)];
+  };
+
+  const catalogEffectiveValue = (definition: StartupOptionDefinition): string => {
+    if (!definition.value) return '';
+    const draft = catalogValueDrafts[definition.id];
+    if (!draft) return definition.value.defaultValue ?? '';
+    if (draft.mode === 'custom') {
+      const custom = draft.custom.trim();
+      return custom || definition.value.defaultValue || '';
+    }
+    return draft.value || definition.value.defaultValue || '';
+  };
+
+  const catalogChipClass = (definition: StartupOptionDefinition, value: string) => {
+    const draft = catalogValueDrafts[definition.id];
+    const active = draft?.mode === 'preset' && draft.value === value;
+    return [
+      'rounded border px-2 py-0.5 text-[11px] transition',
+      active
+        ? 'border-sky-600 bg-sky-600 text-white'
+        : 'border-gray-300 bg-white text-gray-700 hover:border-sky-400 hover:text-sky-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200',
+    ];
+  };
+
+  const catalogCustomInput = (definition: StartupOptionDefinition) => {
+    const draft = catalogValueDrafts[definition.id];
+    return draft?.mode === 'custom' ? draft.custom : '';
+  };
+
+  /** 点预设/候选值：写入选中值，同时清空自定义输入（互斥）。 */
+  const pickCatalogValue = (definition: StartupOptionDefinition, value: string) => {
+    const draft = ensureCatalogDraft(definition);
+    draft.mode = 'preset';
+    draft.value = value;
+    draft.custom = '';
+  };
+
+  /** 光标进入自定义输入框：取消前面预设的选中态。 */
+  const enterCatalogCustom = (definition: StartupOptionDefinition) => {
+    const draft = ensureCatalogDraft(definition);
+    if (draft.mode === 'custom') return;
+    draft.mode = 'custom';
+    draft.custom = '';
+  };
+
+  const updateCatalogCustom = (definition: StartupOptionDefinition, value: string) => {
+    const draft = ensureCatalogDraft(definition);
+    draft.mode = 'custom';
+    draft.custom = value;
+  };
+
   const addDefinition = (definition: StartupOptionDefinition) => {
     if (isDefinitionAdded(definition.id)) {
       message.info(`${definition.name} 已存在`);
       return;
     }
-    const entry = createStartupEntry(definition.id);
+    const value = catalogEffectiveValue(definition).trim();
+    if (definition.value?.kind === 'number' && value !== '') {
+      const numeric = Number(value);
+      const { min, max } = definition.value;
+      if (!Number.isFinite(numeric)) {
+        message.warning(`${definition.name} 需要填写数字`);
+        return;
+      }
+      if (min !== undefined && numeric < min) {
+        message.warning(`${definition.name} 不能小于 ${min}`);
+        return;
+      }
+      if (max !== undefined && numeric > max) {
+        message.warning(`${definition.name} 不能大于 ${max}`);
+        return;
+      }
+    }
+    const entry = createStartupEntry(definition.id, undefined, value || undefined);
     if (!entry) return;
     entries.value.push(entry);
+    resetCatalogDraft(definition);
   };
 
   const removeDefinition = (definitionId: string) => {

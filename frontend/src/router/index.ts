@@ -15,6 +15,7 @@ const ServerInfo = () => import('../views/ServerInfo.vue');
 const ServerConfig = () => import('../views/ServerConfig.vue');
 const ServerStartup = () => import('../views/ServerStartup.vue');
 const ServerMaintenance = () => import('../views/ServerMaintenance.vue');
+const Runtime = () => import('../views/Runtime.vue');
 const Backup = () => import('../views/Backup.vue');
 const Logs = () => import('../views/Logs.vue');
 const Audit = () => import('../views/Audit.vue');
@@ -107,6 +108,12 @@ const router = createRouter({
           path: 'server-maintenance',
           name: 'ServerMaintenance',
           component: ServerMaintenance,
+          meta: { requiresAdmin: true },
+        },
+        {
+          path: 'runtime',
+          name: 'Runtime',
+          component: Runtime,
           meta: { requiresAdmin: true },
         },
         {

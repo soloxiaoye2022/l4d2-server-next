@@ -1,0 +1,12 @@
+[Unit]
+Description=L4D2 面板宿主机运行时 Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=L4D2_CONTROL_DIR=/opt/l4d2-manager/control
+Environment=L4D2_ALLOWED_ROOTS=/home:/data:/opt:/srv:/var/lib:/root
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/l4d2-manager/runtime-agent/l4d2_runtime_agent.py --once
+Nice=5

@@ -63,6 +63,8 @@ declare module 'vue' {
     ATabs: typeof import('ant-design-vue/es')['Tabs']
     ATag: typeof import('ant-design-vue/es')['Tag']
     ATextarea: typeof import('ant-design-vue/es')['Textarea']
+    ATimeline: typeof import('ant-design-vue/es')['Timeline']
+    ATimelineItem: typeof import('ant-design-vue/es')['TimelineItem']
     ATooltip: typeof import('ant-design-vue/es')['Tooltip']
     AUploadDragger: typeof import('ant-design-vue/es')['UploadDragger']
     CvarDefinitionDetails: typeof import('./components/settings/CvarDefinitionDetails.vue')['default']
