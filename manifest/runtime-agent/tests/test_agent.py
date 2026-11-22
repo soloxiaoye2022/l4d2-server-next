@@ -153,6 +153,54 @@ Restart=on-failure
                 f"{helper} 不应被识别为游戏服",
             )
 
+    def test_wrapper_script_drops_port(self) -> None:
+        # 真实部署常见 ExecStart 指向包装脚本，unit 里没有 +hostport，
+        # parse_unit 只能得到 0，这就是需要 live port 兜底的原因。
+        unit = """[Service]
+WorkingDirectory=/data/l4d2-server
+ExecStart=/data/l4d2-server/start_server.sh
+User=root
+"""
+        spec = systemd_provider.parse_unit(unit, "/etc/systemd/system/l4d2.service")
+        self.assertEqual(spec["port"], 0)
+
+    def test_live_port_from_main_pid(self) -> None:
+        provider = systemd_provider.SystemdProvider()
+        processes = [
+            {
+                "pid": 456098,
+                "argv": [
+                    "/bin/sh",
+                    "/data/l4d2-server/srcds_run",
+                    "-game",
+                    "left4dead2",
+                    "+hostport",
+                    "27015",
+                ],
+                "cgroup": "/system.slice/l4d2.service",
+            }
+        ]
+        with mock.patch.object(systemd_provider, "find_game_processes", return_value=processes):
+            self.assertEqual(provider._live_port("l4d2.service", 456098), 27015)
+
+    def test_live_port_from_cgroup_child(self) -> None:
+        # MainPID 是包装脚本时端口可能只在子进程上，按 cgroup 归属匹配。
+        provider = systemd_provider.SystemdProvider()
+        processes = [
+            {
+                "pid": 456124,
+                "argv": ["./srcds_linux", "-game", "left4dead2", "+hostport", "27016"],
+                "cgroup": "/system.slice/l4d2.service",
+            }
+        ]
+        with mock.patch.object(systemd_provider, "find_game_processes", return_value=processes):
+            self.assertEqual(provider._live_port("l4d2.service", 999), 27016)
+
+    def test_live_port_returns_zero_without_match(self) -> None:
+        provider = systemd_provider.SystemdProvider()
+        with mock.patch.object(systemd_provider, "find_game_processes", return_value=[]):
+            self.assertEqual(provider._live_port("l4d2.service", 1), 0)
+
 
 class DockerDetectTest(unittest.TestCase):
     def test_rejects_panel_container(self) -> None:

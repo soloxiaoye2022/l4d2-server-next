@@ -101,6 +101,8 @@ class SystemdProvider(Provider):
         scope = self._scope(target)
         state, pid = self._active_state(unit, scope)
         port = int(spec.get("port") or 0)
+        if port <= 0 and pid > 0:
+            port = self._live_port(unit, pid)
         running = state == "active" and pid > 0
         log_tail = ""
         if pid > 0:
@@ -113,6 +115,23 @@ class SystemdProvider(Provider):
             reason="" if running else f"ActiveState={state or 'unknown'}",
             state="running" if running else ("starting" if state == "activating" else ""),
         )
+
+    def _live_port(self, unit: str, pid: int) -> int:
+        """从运行中的进程命令行兜底解析端口。
+
+        ExecStart 指向包装脚本（例如 start_server.sh）时，unit 文件里根本
+        没有 +hostport，parse_unit 只能得到 0。这样健康检查会一直认为
+        "端口未监听"，用户看到的是"启动中"，与事实相反。
+
+        包装脚本在真实部署里很常见，所以这里读实际 srcds 进程的 argv：
+        先按 MainPID 精确匹配，再按 cgroup 里的 unit 名匹配子孙进程。
+        """
+        for item in find_game_processes():
+            if pid and item["pid"] == pid:
+                return parse_port(item["argv"])
+            if unit and unit in (item.get("cgroup") or ""):
+                return parse_port(item["argv"])
+        return 0
 
     def start(self, target: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
         unit = self._unit(target)
@@ -226,6 +245,12 @@ class SystemdProvider(Provider):
             if spec is None:
                 continue
             state, pid = self._active_state(unit, scope)
+            # ExecStart 是包装脚本时 spec.port 为 0，接管后健康检查会失准，
+            # 所以扫描阶段就补上运行进程里的真实端口。
+            if not spec.get("port") and pid > 0:
+                live_port = self._live_port(unit, pid)
+                if live_port:
+                    spec["port"] = live_port
             results.append(
                 {
                     "kind": self.kind,
