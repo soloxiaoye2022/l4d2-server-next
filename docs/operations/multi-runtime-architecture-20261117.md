@@ -1656,3 +1656,85 @@ EOF
 - `POST /runtime/migrate/plan|apply` 未在远端真实执行（迁移会停服并改写 unit，需用户在窗口期授权）。
 - screen / tmux / nohup / bare provider 远端无环境可测（远端只有 systemd + docker）。
 - `remote_cli.py` 参数直传 shell 的问题未修（R6），当前通过 `probe_api.py` 绕开。
+
+---
+
+## 22. 第二台机器部署：cc雨云（2026-11-22）
+
+部署目标：`123.99.201.252:39322`（root），Ubuntu 24.04.1，Docker 29.7.2。
+镜像 `l4d2-manager-next:enhanced-20261122`，容器 `l4d2-manager`；回滚容器 `l4d2-manager-prev-20261122`。
+
+### 22.1 与 101.43 的部署差异
+
+这台机器不是 Compose 部署，没有 `/opt/l4d2-manager` 目录，游戏服是**宿主机原生 systemd**（`l4d2.service`），不是 Docker 容器。
+
+| 项 | 101.43.105.208 | 123.99.201.252 |
+|---|---|---|
+| 面板部署 | Compose（`/opt/l4d2-manager/compose.yaml`） | `docker run` 裸命令 |
+| 游戏服 | systemd `l4d2.service`，路径 `/home/ubuntu/steamcmd/l4d2` | systemd `l4d2.service`，路径 `/data/l4d2-server` |
+| 启动方式 | `srcds_run` 直接作为 ExecStart | `ExecStart=/data/l4d2-server/start_server.sh`（包装脚本） |
+| 面板运行用户 | UID 1000（l4d2） | root |
+| SteamCMD | 有（`/home/ubuntu/steamcmd`） | **没有**（只有 Steam 客户端下载好的游戏文件） |
+| 原有卷 | control/data/plugins/game | `l4d2_l4d2-plugins`、`l4d2_l4d2-manager-data` |
+
+因为游戏服是原生 systemd，运行时的 `systemd` provider 直接可用，不需要 Docker 通道。
+
+### 22.2 部署步骤
+
+镜像增量构建（不传源码和 plugins，`/plugins` 是独立卷）：
+
+```dockerfile
+FROM l4d2-manager-next:custom
+RUN rm -rf /static && mkdir -p /static
+COPY static/. /static/
+COPY l4d2-manager /l4d2-manager
+COPY systemd /manager-systemd
+COPY runtime-agent /manager-runtime-agent
+```
+
+容器重建时在原有参数上补 3 项挂载和 4 个环境变量：
+
+| 新增 | 用途 |
+|---|---|
+| `-v /run/systemd/system:/host/systemd:ro` | 面板判定宿主机有 systemd |
+| `-v /etc/systemd/system:/host/systemd-units:ro` | 读取真实 unit 文件解析启动项 |
+| `-v /opt/l4d2-manager/control:/control` | 与宿主机 Agent 交换任务 |
+| `L4D2_HOST_SYSTEMD_DIR=/host/systemd` | 宿主 systemd 目录 |
+| `L4D2_RUNTIME_USER=root` | 游戏服以 root 运行 |
+| `L4D2_STARTUP_SERVICE_NAME=l4d2.service` | 服务名 |
+| `L4D2_STARTUP_UNIT_PATH=/host/systemd-units/l4d2.service` | 启动项文件路径 |
+
+原有环境变量通过 `docker inspect --format '{{range .Config.Env}}'` 导出到 `container.env` 再用 `--env-file` 传入，**密码不落日志、不经过中间文件明文打印**。
+
+宿主机安装 `apply-startup.sh`、`run-maintenance.sh`、`repair-addons.sh`、`runtime-control.sh`、`diagnose-server.sh` 与 5 组 path/service unit；`l4d2-runtime.path`、`l4d2-maintenance.path`、`l4d2-repair.path`、`l4d2-diagnostics.path` 全部 `enable --now`。
+
+### 22.3 本轮发现的缺陷
+
+| 编号 | 缺陷 | 证据 | 修正 |
+|---|---|---|---|
+| R7 | `ExecStart` 指向包装脚本时端口恒为 0，健康检查误判"启动中" | 扫描结果 `spec.port=0`；`/runtime/status` 返回 `state=starting`、`port_listening=false`；实际 `ss` 显示 27015 在监听 | `SystemdProvider._live_port()`：spec.port 为 0 时读实际 srcds 进程 argv，先按 MainPID 精确匹配，再按 cgroup 里的 unit 名匹配子孙进程；`inspect()` 与 `_detect_scope()` 两处都调用 |
+| R8 | rebase 解冲突时误删 `manager.Dockerfile` 里 `COPY ./manifest/runtime-agent` | `git diff` 显示该行被删 | 恢复；否则 `install.sh` 从 `/manager-runtime-agent` 提取 Agent 会失败 |
+
+R7 是真实部署里很常见的形态：用户用 `start_server.sh` 之类的包装脚本做 tickrate 选择、RCV 密码写入、32 位库修复，`ExecStart` 里自然没有 `+hostport`。修复前这类部署接管后界面永远显示"启动中"。
+
+### 22.4 验证结果
+
+| 接口 | 结果 |
+|---|---|
+| `GET /platform` | 200，`agent_mode=bridge`、`runtime_management=true`、9 种 `runtime_kinds` |
+| `POST /runtime/detect` | 200，候选 `l4d2.service`，`port=27015`（修复后），`confidence=0.95` |
+| `POST /runtime/adopt` | 200，`id=main`、`spec.port=27015`、`origin=detected` |
+| 重复 `POST /runtime/detect` | 200，`adoptable=false`、`reason=该服务端已被运行时 main 接管`（正确拒绝重复接管） |
+| `GET /runtime/status?id=main` | 200，`state=running`、`port_listening=true`、`port_owners=[srcds_linux]`、`rcon_reachable=true` |
+| `POST /runtime/action` restart | 200，`message=已重启: l4d2.service`、新 PID 459183 |
+| 重启后端口 | 约 25 秒后 `srcds_linux` 重新监听 27015 |
+| `POST /server-startup/get` | 200，`exec_start=/data/l4d2-server/start_server.sh`、`port=27015`、`working_directory=/data/l4d2-server` |
+| 前端 bundle | `app-B1nd2q81.js`，与本地构建产物一致 |
+
+Agent 单测：本地 31 个用例通过（新增 4 个端口兜底用例），宿主机同一份代码跑通。
+
+### 22.5 已知限制
+
+- **这台机器没有 SteamCMD**，`找 steamcmd.sh` 为空。服务端更新/检查更新功能不可用，`/server-maintenance/status` 的 `steam_directory` 落到 `/data`。需要先装 SteamCMD 才能用；当前 `appmanifest_222860.acf` 的 `buildid=23990100`。
+- `L4D2_STARTUP_UNIT_PATH` 指向只读挂载的真实 unit，面板"保存启动项"会写 `/control/l4d2.service` 快照，由 `l4d2-startup.path` 校验后覆盖宿主机 unit。本轮没有 enable `l4d2-startup.path`，避免误改手工维护的 `start_server.sh` 体系。
+
