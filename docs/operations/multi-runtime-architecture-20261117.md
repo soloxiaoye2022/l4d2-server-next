@@ -1616,7 +1616,7 @@ EOF
 
 | 编号 | 缺陷 | 证据 | 修正 |
 |---|---|---|---|
-| R1 | `run-maintenance.sh` 把 SteamCMD 客户端自更新塞进 `timeout 180` 同一条命令 | `maintenance-result.json` = `[16%] Downloading update (5,858 of 36,566 KB)`；`journalctl -u l4d2-maintenance` 7 次 `status=1/FAILURE`；`appmanifest_222860.acf` `buildid 23990100 / UpdateResult 0` 说明游戏本体已最新 | 自更新 `1200s`、查询 `180s` 分阶段；`L4D2_STEAMCMD_SELF_UPDATE_TIMEOUT` / `L4D2_STEAMCMD_QUERY_TIMEOUT` 可覆盖 |
+| R1 | `run-maintenance.sh` 把 SteamCMD 客户端自更新塞进 `timeout 180` 同一条命令 | `maintenance-result.json` = `[16%] Downloading update (5,858 of 36,566 KB)`；`journalctl -u l4d2-maintenance` 7 次 `status=1/FAILURE`；`appmanifest_222860.acf` `buildid 23990100 / UpdateResult 0` 说明游戏本体已最新 | 自更新与查询分阶段计时；`L4D2_STEAMCMD_SELF_UPDATE_TIMEOUT` / `L4D2_STEAMCMD_QUERY_TIMEOUT` 可覆盖。**超时值后续在 §29 从 1200 调到 3600** |
 | R2 | check 与 update 共用 `l4d2-update.log`，客户端自更新的 "Downloading update" 让用户误判为游戏本体在更新 | `l4d2-update.log` 停在 12:03，`l4d2-check.log` 12:39 新增 3622 字节 | 新增 `CHECK_LOG`，check 全部写入 `l4d2-check.log` |
 | R3 | 业务失败 `exit 1` 被 systemd 标记 `failed`，前端只显示"服务失败"看不到真实 message | 7 次 `status=1/FAILURE` | 全部 `exit 1` 改 `exit 0`，结论只走 `maintenance-result.json` |
 | R4 | `verify_remote.py` 用固定 `/tmp/api_out.json`，root 先创建 0644 后普通用户写入静默失败 → 所有接口返回同一份旧 JSON（假证据） | 每个接口返回内容完全相同 | 改 `mktemp /tmp/api_XXXXXX.json` 每请求独占 + 用完删除 |
@@ -1736,5 +1736,737 @@ Agent 单测：本地 31 个用例通过（新增 4 个端口兜底用例），�
 ### 22.5 已知限制
 
 - **这台机器没有 SteamCMD**，`找 steamcmd.sh` 为空。服务端更新/检查更新功能不可用，`/server-maintenance/status` 的 `steam_directory` 落到 `/data`。需要先装 SteamCMD 才能用；当前 `appmanifest_222860.acf` 的 `buildid=23990100`。
-- `L4D2_STARTUP_UNIT_PATH` 指向只读挂载的真实 unit，面板"保存启动项"会写 `/control/l4d2.service` 快照，由 `l4d2-startup.path` 校验后覆盖宿主机 unit。本轮没有 enable `l4d2-startup.path`，避免误改手工维护的 `start_server.sh` 体系。
+
+---
+
+## 23. 启动项保存与包装脚本参数解析修复（2026-11-23）
+
+### 23.1 缺陷
+
+用户反馈"保存启动项"报错：
+
+```
+读写启动项文件失败: open /host/systemd-units/l4d2.service: read-only file system
+```
+
+同页还有两个相关问题：
+- 启动参数区显示"暂无启动参数"，同时红字提示"缺少 -game left4dead2"
+- 服务端维护页提示 SteamCMD 不可执行（已在 §22 修复为可操作提示）
+
+### 23.2 根因（实测证据）
+
+| 现象 | 证据 | 结论 |
+|---|---|---|
+| 写 unit 失败 | 容器内 `touch /host/systemd-units/.writetest` → `Read-only file system`；`/proc/mounts` 显示 `ro,relatime` | 只读挂载，与 root 无关 |
+| 容器身份 | `docker exec l4d2-manager id` → `uid=0(root)` | 不是权限问题 |
+| 环境变量 | `L4D2_STARTUP_UNIT_PATH=/host/systemd-units/l4d2.service` | 旧代码无条件写该路径 |
+| 参数为空 | `ExecStart=/data/l4d2-server/start_server.sh`（只有脚本路径） | 真实参数在脚本内部，unit 里读不到 |
+| path unit 未生效 | `systemctl is-enabled l4d2-startup.path` → `disabled` | 保存后无人应用快照 |
+| 应用脚本无法执行 | `/usr/bin/env: 'bash\r': No such file or directory` | `apply-startup.sh` 是 CRLF 行尾 |
+
+### 23.3 代码修改
+
+**`backend/logic/server_startup.go`**
+
+| 函数 | 变更 |
+|---|---|
+| `serverStartupUnitPath()` | 只表示"部署的真实 unit 路径"，不再参与写入决策 |
+| `serverStartupSnapshotPath()` | 新增：返回 `/control/l4d2.service`（Windows 为 `l4d2.bat`） |
+| `serverStartupReadPath()` | 新增：真实 unit 与快照谁新读谁，宿主机手工改过 unit 时以 unit 为准 |
+| `startupDirWritable()` | 新增：真正创建临时文件探测可写性，`Stat` 成功不代表能写 |
+| `startupUnitWritablePath()` | 新增：可写就原地写，只读则退回快照；两者都不可写时给出带 `-v` 提示的错误 |
+| `applyRunningProcess()` | 新增：`ExecStart` 是包装脚本时，从运行进程补齐真实参数与端口 |
+
+**`backend/logic/process_commandline.go`（新增）**
+
+- `HostProcRoot()`：优先 `L4D2_HOST_PROC_DIR`（容器为 `/host/proc`），否则 `/proc`
+- `FindServiceProcess(unitName)`：按 cgroup 归属精确匹配；同 unit 下 `srcds_run` 与 `srcds_linux` 都命中时取参数最长者
+- 无 cgroup 归属时候选必须唯一才采纳，避免多实例取错进程
+- `resolveProcessExec()`：把 `./srcds_linux` 按进程 cwd 还原成绝对路径
+- `isWrapperExecStart()`：可执行文件不以 `srcds` 开头即视为包装脚本
+
+**`frontend/src/views/ServerStartup.vue`**
+
+- 包装脚本场景解析运行进程命令行，而不是解析只有脚本路径的 `ExecStart`
+- 过滤 `+map`：那是 `srcds_run` 运行时追加的当前地图，不属于启动参数
+- 包装脚本场景改为信息提示，不再误报"缺少 -game left4dead2"
+- 保存确认弹窗说明：保存后 unit 直接调用 `srcds`，脚本内的 tick 模板复制等逻辑不再执行
+
+### 23.4 部署侧修正
+
+- `manifest/systemd/*.sh` 与 `*.path` / `*.service` 全部转为 LF 行尾（原来 8 个文件是 CRLF，shebang 损坏）
+- 宿主机 `l4d2-startup.path` 已 `enable --now`
+- 容器补 `L4D2_HOST_PROC_DIR=/host/proc`
+
+### 23.5 端到端验证
+
+| 步骤 | 结果 |
+|---|---|
+| `POST /server-startup/get` | 200，`exec_start_is_wrapper=true`、`process_command=./srcds_linux -game left4dead2 -insecure -tickrate 100 -condebug +ip 0.0.0.0 +hostport 27015 +exec server.cfg +map c1m1_hotel`、`process_pid=459222`、`process_executable=/data/l4d2-server/srcds_linux` |
+| `POST /server-startup/update`（写绝对路径） | 200，`reload_message=启动项已保存，宿主机 path unit 会自动重载` |
+| 快照生成 | `/opt/l4d2-manager/control/l4d2.service` 1042 字节，含中文注释块与绝对路径 `ExecStart` |
+| 真实 unit 未被面板直接改 | `mtime` 仅在 path unit 应用后变化，内容先备份到 `l4d2.service.bak` |
+| `l4d2-startup.service` | `status=0/SUCCESS`，结果 JSON `status=success`、`daemon_reload=true` |
+| `GET` 回读 | `reload_status=success`、`reload_message=systemd 服务定义已重载` |
+| 恢复包装脚本后 | `reload_status=success`、`exec_start_is_wrapper=true`、参数仍从运行进程解析 |
+
+单元测试 `TestUpdateServerStartupFallsBackToWritableSnapshot`、`TestServerStartupReadPathPrefersNewerSnapshot`、`TestFindServiceProcess*`、`TestIsWrapperExecStart` 全部通过（只读模拟用例在 root 与 Windows 下自动跳过）。
+
+### 23.6 已知取舍
+
+包装脚本 `start_server.sh` 做了三件事：复制 `server.cfg.<tick>tick`、写入 `rcon_password`、把 `bin/libstdc++.so.6` 改名为 `.so.6s`。实测三项当前均已处于目标状态（`server.cfg` 与 100tick 模板只差 rcon 密码一行），因此面板保存改成直接调用 `srcds` 行为等价。若用户仍希望保留脚本，可执行 `cp /root/l4d2-startup-backup-20261223/l4d2.service.orig /etc/systemd/system/l4d2.service && systemctl daemon-reload` 回退。
+
+---
+
+## 24. 服务器名多插件检测（2026-11-23）
+
+### 24.1 需求
+
+同一台服务器可能同时装多个服务器名插件（L4D2 中文服务器名、Neko ServerName、hostname 等）。
+**不能按 smx 文件名识别**，必须按插件实际加载后的运行时名字判断，并且多个并存时要全部检测出来。
+
+### 24.2 实现
+
+`backend/logic/server_hostname.go`（新增）：
+
+| 能力 | 实现 |
+|---|---|
+| 运行时生效值 | RCON `hostname`，正则 `"hostname"\s*=\s*"..."`，兼容裸值回显 |
+| 插件识别 | RCON `sm plugins list` → 正则取引号内运行时插件名 → 关键词过滤 |
+| 关键词 | `hostname`、`server name`、`servername`、`server_name`、`服名`、`服务器名`、`servertitle` |
+| 配置来源 | 6 个候选文件按优先级探测，含纯文本、KeyValues、按端口嵌套三类格式 |
+| 模板识别 | `\{[^}]*[A-Za-z][^}]*\}` 才算占位符，避免把 `[4特]` 误判 |
+| 编码兼容 | UTF-8 优先，失败用 GBK 解码，去 BOM |
+
+关键词用完整词组而非 `server`，避免把 `Server Message System` 误判成服务器名插件。
+
+`ResolveHostname` 优先级：**RCON 生效值 > 非模板文件值 > 模板值**。
+因为 `nekocustom.cfg` 里存的是 `CC偏纯净多特{servernum}服[...]` 这类模板，直接展示对用户没意义。
+
+### 24.3 前端
+
+`ServerInfo.vue` 分三块展示证据：运行中实际生效值、已加载的服务器名插件标签、配置文件列表（模板来源加橙色标记）。
+标题旁的文件名从写死的 `l4d2_hostname.txt` 改成按检测结果动态显示。
+
+### 24.4 实测结果（cc雨云）
+
+```
+hostname        = CC偏纯净多特155服[4特10秒][重启:0|路程:0%][计时:00m:03s]
+hostname_source = rcon
+plugins         = ['L4D2 中文服务器名', 'Neko ServerName']
+source: hostname (SourceMod 服务器名) | configs/hostname/hostname.txt | template=False | raw=偏纯净三方多特tick100
+source: Neko ServerName | data/nekocustom.cfg | template=True | raw=CC偏纯净多特{servernum}服[{specials}特{times}秒]...
+```
+
+两个服务器名插件都被识别出来，且模板文件被正确标记。
+
+单测覆盖：RCON 两种回包格式、运行时插件名解析、关键词排除误判、模板识别、多来源探测、优先级选择、Neko 结构写入保留、GBK/BOM 解码。
+
+---
+
+## 25. 插件 cfg 中文注释与 README 补齐（2026-11-23）
+
+### 25.1 cfg 注释翻译
+
+远端 `cfg/sourcemod` 共 109 个文件、1973 行英文注释。先分类：
+
+| 类型 | 去重条数 | 处理 |
+|---|---|---|
+| 描述行为的自然语言 | 184 | 翻译 |
+| `ConVars for plugin "xxx"` 头 | 95 | 保留原文 |
+| `Default:` / `Maximum:` / `Minimum:` | 195 | 保留原文 |
+| `This file was auto-generated` | 11 | 保留原文 |
+| `Requires: xxx.smx` | 4 | 保留原文 |
+
+机器生成的元信息不翻译：它们是插件重新生成 cfg 时会被覆盖的产物，翻译没有意义。
+
+写入格式保留原文，中文追加在后面：
+
+```cfg
+// Specifies how many maps to include in the vote.   ｜  指定投票中包含多少张地图。
+sm_mapvote_include "5"
+```
+
+这样可追溯，且不会破坏 SourceMod 的注释解析。实测写入 192 行，涉及 29 个文件，备份在 `/root/cfg-translations-backup/<时间戳>/`。
+
+运行时验证：通过 RCON 执行 `exec sourcemod/sourcemod.cfg`、`exec sourcemod/mapchooser.cfg`、`exec sourcemod/l4d2_skill_detect.cfg`、`exec sourcemod/l4dinfectedbots.cfg`，四条命令均无报错，插件数量保持 189 个不变。
+
+### 25.2 插件 README 补齐
+
+插件商店 187 个目录中，60 个原本有 README，127 个没有。
+
+生成原则：**只用真实证据，不编造**。每份说明由以下可核实信息拼成：
+
+1. 目录名里的 `必选-` / `可选-` 前缀
+2. 目录名括号内的作者（排除纯版本号）
+3. 插件目录内实际的 `.smx` 文件
+4. gamedata 签名文件是否存在
+5. cfg 里的 ConVar 与中文说明
+
+关键设计：**配置不在插件商店目录里**。插件商店多数只放 smx，实际 cfg 由插件首次运行时写到游戏服 `cfg/sourcemod` 下，靠文件名对应（`l4d2_gift.smx` ↔ `l4d2_gift.cfg`）。所以生成器建立了 109 个文件名索引做跨目录关联，把配置说明补进 README。
+
+匹配 ConVar 的正则必须允许大写字母（`l4d2_Kill_enabled_health`），否则会漏。被 cfg 折行截断的半句描述会被丢弃而不是展示，避免误导。
+
+结果：187/187 全部有 README，其中 51 个含配置说明，21 个识别出作者。
+
+### 25.3 脚本
+
+全部在 `build/` 下（已 gitignore）：
+
+| 脚本 | 用途 |
+|---|---|
+| `cfg_collect_comments.py` | 采集远端 cfg 英文注释 |
+| `cfg_classify.py` | 分类，区分「值得翻译」与「机器生成」 |
+| `cfg_translations.py` | 翻译词典（185 条） |
+| `apply_cfg_translations.py` | 远端写入，保留原文追加中文 |
+| `generate_plugin_readmes.py` | 生成 README，支持跨目录 cfg 关联 |
+
+---
+
+## 26. 切换为直调 srcds_linux（2026-11-23）
+
+### 26.1 为什么要两步
+
+直接照抄 `srcds_run` 的命令行会起不来，因为 `srcds_run` 做了两件 unit 里看不到的事：
+
+| srcds_run 的行为 | 直调时必须补什么 |
+|---|---|
+| 第 11 行 `export LD_LIBRARY_PATH=".:bin:$LD_LIBRARY_PATH"` | systemd drop-in 注入 `Environment=LD_LIBRARY_PATH=.:bin` |
+| 第 142-144 行自动补 `+map c1m1_hotel` | ExecStart 显式写 `+map c1m1_hotel` |
+
+第一条容易被忽略：`ldd` 查不出缺失（这是链接期依赖），但运行时 `dlopen bin/engine_srv.so` 依赖这个路径。
+
+第二条是实际踩到的坑：只补 `LD_LIBRARY_PATH` 时进程能起来、端口在监听，但 `sm plugins list` 返回 0，`meta version` 提示 `You must change the map to activate Metamod:Source`，`changelevel` 报 `Can't changelevel, not running server`——服务器停在 hibernating，Metamod 从未激活。
+
+### 26.2 落地方式
+
+```bash
+# /etc/systemd/system/l4d2.service.d/10-ld-library-path.conf
+[Service]
+Environment=LD_LIBRARY_PATH=.:bin
+```
+
+```
+ExecStart=/data/l4d2-server/srcds_linux -game left4dead2 -insecure -tickrate 100 \
+  -condebug +ip 0.0.0.0 +hostport 27015 +exec server.cfg +map c1m1_hotel
+```
+
+启动项仍由面板写入快照，宿主机 `l4d2-startup.path` 校验后安装，链路不变。
+
+### 26.3 验证结果
+
+| 项 | 结果 |
+|---|---|
+| `systemctl is-active` | `active`，`NRestarts=0` |
+| 进程 PPID | `1`（直接由 systemd 拉起，不再有 `srcds_run` 中间层） |
+| `LD_LIBRARY_PATH` | `.:bin` 生效 |
+| 端口 | `0.0.0.0:27015` UDP 监听 |
+| 插件数 | **189**（与切换前一致） |
+| 服务器名 | `CC偏纯净多特155服[4特10秒][重启:0\|路程:0%][计时:00m:06s]`，插件正常生效 |
+| 启动项接口 | `reload_status=success`、`exec_start_is_wrapper=false` |
+
+### 26.4 回滚
+
+```bash
+cp -a /root/l4d2-direct-switch-20261123/l4d2.service.before /etc/systemd/system/l4d2.service
+rm -f /etc/systemd/system/l4d2.service.d/10-ld-library-path.conf
+systemctl daemon-reload && systemctl restart l4d2.service
+```
+
+备份含 `l4d2.service.before`（原 unit）、`snapshot.before`（原快照）。
+`start_server.sh` 原地保留，未删除。
+
+---
+
+## 27. 插件 README 补全命令与用法（2026-11-23）
+
+### 27.1 问题
+
+第一版 README 只有配置项，缺「怎么用」：玩家不知道按键和聊天命令。
+
+### 27.2 数据来源（关键决策）
+
+试过三条路，只有第三条可用：
+
+| 方案 | 结果 |
+|---|---|
+| 从 smx 字符串池提取 `RegConsoleCmd` | **失败**：字符串池被编译器混淆，只有 `.code`/`.data` 段名和乱码 |
+| 按目录名匹配运行时插件名 | **只能覆盖 41/91**：目录是中文（`击杀特感掉落礼盒`），运行时是英文（`L4D2 Gift`） |
+| `sm plugins info <序号>` + `sm cmds <序号>` | **可用**：`Filename` 是两边唯一能对上的键 |
+
+`sm plugins info` 返回：
+
+```
+Filename: l4d2_gift.smx
+Title: L4D2 Gift (击杀特感几率掉落礼盒)
+Author: Hitomi
+Version: 1.2
+URL: https://github.com/cy115/
+```
+
+`sm cmds` 返回命令表（表头 `[Name] [Type] [Help]`）：
+
+```
+sm_tgvote           console      打开特感投票菜单
+sm_tgvoteadmin      admin        打开管理员投票控制菜单
+```
+
+### 27.3 采集结果
+
+| 项 | 数量 |
+|---|---|
+| 插件总数 | 189 |
+| 有 Filename | 189 |
+| 有 Title（含中文说明） | 184 |
+| 有 Author | 181 |
+| 注册命令总数 | 270 |
+
+### 27.4 README 结构
+
+```markdown
+# 击杀特感掉落礼盒
+
+> 插件内显示名：L4D2 Gift (击杀特感几率掉落礼盒)
+
+## 说明
+- 版本：1.2
+- 提供 15 个可配置项
+
+## 命令与用法          ← 新增，玩家最需要
+### 玩家命令
+| 命令 | 聊天框输入 | 说明 |
+| `sm_tgvote` | `!tgvote` | 打开特感投票菜单 |
+
+### 管理员命令
+| 命令 | 权限 | 说明 |
+| `sm_tgvoteadmin` | admin | 打开管理员投票控制菜单 |
+
+## 作者
+- Hitomi
+- 项目地址：https://github.com/cy115/
+
+## 主要配置 / 配置文件
+```
+
+用户命令章节显式说明「在聊天框输入 `!命令名`」，因为 `sm_xxx` 是控制台命令，玩家不知道 `!xxx` 就是它的聊天框写法。
+
+### 27.5 覆盖率
+
+| 项 | 结果 |
+|---|---|
+| 有 README | 187 / 187 |
+| 含命令章节 | **85**（原先 49，靠 Filename 匹配翻倍） |
+| 含插件内显示名 | 162 |
+| 识别出作者 | **175**（原先 67） |
+| 含配置说明 | 86 |
+
+`/plugins/readme` 接口验证返回完整 Markdown，面板可直接渲染。
+
+### 27.6 脚本
+
+| 脚本 | 用途 |
+|---|---|
+| `cc_collect_plugin_meta.py` | 采集 `sm plugins info` + `sm cmds`，产出 `plugin-meta.json` |
+| `generate_plugin_readmes.py --all --apply` | 全量重生成，含命令章节 |
+
+---
+
+## 28. 插件说明自动化：上传即生成，启用后补全（2026-11-24）
+
+### 28.1 要解决的问题
+
+§25/§27 的 README 是靠一次性脚本补齐的，只对线上这 187 个插件有效。用户后续手动上传新插件时，面板仍然显示「此插件无说明文件」，还得人工再跑一遍脚本。
+
+目标：把这件事变成面板自带能力。
+
+### 28.2 设计：两阶段生成
+
+| 阶段 | 触发点 | 能拿到什么 |
+|---|---|---|
+| 基础版 | `UploadPlugin` 落盘后 | smx 清单、cfg 配置项与中文注释、gamedata 签名、目录名里的作者 |
+| 补全版 | `loadPluginRuntimeBatch` / `ReloadPlugin` 成功后 | 追加运行时命令表（`sm cmds`） |
+
+选两阶段而不是一次性生成，原因很直接：**命令只有插件真正被 SourceMod 加载后才注册得到**，上传时服务器里还没有这个插件，`sm cmds` 一定查不到。
+
+用户确认过这个取舍：「上传即生成基础版，启用后补全」。
+
+### 28.3 覆盖保护
+
+生成的文件首行写 `<!-- generated-by: l4d2-manager -->`。覆盖前先判断：
+
+- 有标记 → 面板产物，允许覆盖
+- 没有标记，但有旧版固定结尾「本说明由面板根据插件目录内的实际文件与配置自动整理」 → 也允许覆盖（§27 脚本产物）
+- 都没有 → 作者或用户手写的文档，跳过并返回 `reason`
+
+旧格式也要认，否则线上已有的 187 个 README 会被误判成人工文档，命令章节永远补不上。这一条有单测 `TestEnrichPluginReadmeUpdatesLegacyGeneratedReadme` 守着。
+
+### 28.4 命令状态三分类（关键修正）
+
+线上实测发现：`sm cmds` 有三种完全不同的返回，第一版把它们混为一谈，一律写「插件尚未启用」，误导用户。
+
+| `sm cmds` 返回 | 含义 | README 写法 |
+|---|---|---|
+| `[SM] Listing commands for: xxx` + 命令表 | 已加载，有命令 | 正常命令章节 |
+| `[SM] No commands found for: xxx` | **已加载，但不注册命令** | 「该插件已在运行，但没有注册任何控制台命令」 |
+| `[SM] Plugin "xxx.smx" was not found.` | 未加载 | 带 pending 标记，提示启用后刷新 |
+
+第二类是最容易误判的。L4D2 大量插件（`a2s fix`、`ai_damagefix` 这类修复插件）靠事件钩子生效，本来就不注册任何命令。把它说成「未启用」既不准确，也会让用户以为插件没生效。
+
+证据样本：
+
+```
+# A2S查询修复（运行中）
+sm plugins info l4d2_a2s_fix.smx
+  Status: running
+sm cmds l4d2_a2s_fix.smx
+[SM] No commands found for: [L4D2] a2s fix
+
+# 自选-Neko多特-NS7（未启用）
+sm plugins info Neko_Specials_binhooks.smx
+[SM] Plugin Neko_Specials_binhooks.smx is not loaded.
+sm cmds Neko_Specials_binhooks.smx
+[SM] Plugin "Neko_Specials_binhooks.smx" was not found.
+```
+
+对应实现是 `PluginCommandScan`（Loaded / NotLoaded / Unknown 三个计数）与 `buildPluginNoCommandSection` 的四分支。
+
+### 28.5 增量规则
+
+- `GeneratePluginReadme`：无条件生成/覆盖（带覆盖保护）
+- `EnrichPluginReadme`：先比对内容，完全相同就返回 `reason=说明内容无变化`，不写盘
+
+所以反复点「刷新说明」是幂等的，不会反复改文件时间戳。
+
+### 28.6 新接口
+
+```
+POST /plugins/readme/refresh   （管理员）
+body: { "name": "插件目录名" }
+resp: {
+  written: bool,
+  has_commands: bool,
+  command_count: int,
+  convar_count: int,
+  untranslated: int,
+  reason: string,
+  content: string,
+  file_name: string
+}
+```
+
+前端在插件详情弹窗右上角加了「刷新说明」按钮，按 `has_commands` / `written` / `reason` 给出不同提示。
+
+### 28.7 翻译词典内嵌
+
+§25 的翻译手段是在远端跑脚本改 cfg。这里把 185 条词典内嵌进二进制：
+
+```
+backend/resources/pluginreadme/cfg-translations.json   （25427 字节，185 条）
+backend/resources/pluginreadme/resources.go            //go:embed + sync.Once 缓存
+```
+
+好处是不依赖运行时外部文件，容器重建后照样能用。词典没命中的注释保留英文原句，条数记进 `untranslated`，README 末尾提示「有 N 条配置注释暂无中文翻译」。
+
+### 28.8 验证结果（cc雨云，2026-11-24）
+
+全量刷新 187 个插件：
+
+| 项 | 数量 |
+|---|---|
+| README 存在 | 187 / 187 |
+| 面板生成（含标记） | 187 |
+| 含运行时命令章节 | 79 |
+| 已加载但无命令 | 87 |
+| 待补全（未加载） | 21 |
+
+二次全量刷新全部返回「说明内容无变化」，确认幂等。
+
+### 28.9 测试
+
+`backend/logic/plugin_readme_test.go` 共 16 个用例，覆盖：
+
+- `sm cmds` 输出解析（有命令 / 无命令 / 空）
+- 玩家命令必须给出 `!xxx` 聊天框写法
+- cfg 解析：词典命中、已有中文、枚举项、截断半句过滤
+- 目录名解析：中文作者、英文作者、说明性括号不臆造
+- 生成：基础版落盘、用户自带 README 不覆盖
+- 补全：命令章节补齐、旧格式 README 可刷新
+
+另需同步 `plugins_test.go`：`LoadPlugin` / `ReloadPlugin` 现在会多发 `sm cmds`，RCON 调用序列断言要跟着改。
+
+### 28.10 部署脚本
+
+| 脚本 | 用途 |
+|---|---|
+| `cc_e2e_readme_refresh.py` | 端到端验证：登录、刷新、读回、落盘核对 |
+| `cc_refresh_all_readmes.py` | 全量刷新 187 个插件并统计三状态分布 |
+| `cc_probe_cmds_unloaded.py` | 采集三类 `sm cmds` 原始返回，确认分类正确 |
+| `cc_spotcheck_readme.py` | 抽检三种状态的 README 文案 |
+| `cc_find_skipped_readme.py` | 定位未写入的插件及原因 |
+
+---
+
+## 29. SteamCMD 自更新超时与 DNS 配置（2026-11-24）
+
+### 29.1 现象
+
+服务端维护页「检查更新」返回 `status=error`，`l4d2-check.log` 停在：
+
+```
+[  8%] Downloading update (2,146 of 25,754 KB)...
+```
+
+日志共 5427 行，其中 5420 行都是同一句进度重复，**没有任何 error/fail/retry 行**。
+
+### 29.2 排查过程（按证据推进，不猜）
+
+| 步骤 | 检查项 | 结果 | 结论 |
+|---|---|---|---|
+| 1 | `getent hosts steamcdn-a.akamaihd.net` | 解析到 2 个 IPv4 | DNS 正常 |
+| 2 | `curl https://steamcdn-a.akamaihd.net/...` | `http_code=200`，`total=1.79s` | 网络通 |
+| 3 | `resolvectl status` | DNS `223.5.5.5 / 223.6.6.6` | 阿里 DNS 正常 |
+| 4 | `ip -6 addr` / `ip -6 route` | 无 IPv6 地址、无默认路由 | IPv6 不可用 |
+| 5 | `curl -6` | `code=000`，0.6ms 失败 | **确认 IPv6 不通** |
+| 6 | `getent ahostsv4 client-update.akamai.steamstatic.com` | 有 IPv4 结果 | 可回退 IPv4 |
+| 7 | `/data/package` 内容 | 已有 26MB `steamcmd_bins_steamrt64.zip.vz` | **下载其实成功过** |
+| 8 | 日志中 8% 前后的包大小 | 先是 `42,739 KB`，后是 `25,754 KB` | **SteamCMD 在换源重试** |
+
+第 8 条是转折点：同一份日志里出现两种包体积，说明不是连接失败，而是 SteamCMD 换下载源后**从 0 重新下**，每次都在 8% 被 `timeout 1200` 杀掉。
+
+### 29.3 根因
+
+不是 DNS，不是 IPv6，是**超时值配得比慢速链路实际需要的时间短**。
+
+实测速率约 1.7 KB/s（2MB / 1200 秒）。25MB 的包在这个速率下需要约 4 小时。1200 秒只能下 8%。
+
+### 29.4 修复
+
+`manifest/systemd/run-maintenance.sh`：
+
+```diff
+-STEAMCMD_SELF_UPDATE_TIMEOUT="${L4D2_STEAMCMD_SELF_UPDATE_TIMEOUT:-1200}"
++STEAMCMD_SELF_UPDATE_TIMEOUT="${L4D2_STEAMCMD_SELF_UPDATE_TIMEOUT:-3600}"
+```
+
+首次初始化允许等 1 小时，环境变量仍可覆盖。
+
+### 29.5 DNS 加固（双保险）
+
+不是根因，但慢速链路上多上游能避免拿到慢节点。写入
+`/etc/systemd/resolved.conf.d/99-l4d2-dns.conf`：
+
+```ini
+[Resolve]
+DNS=223.5.5.5 223.6.6.6 119.29.29.29 8.8.8.8
+FallbackDNS=1.1.1.1 9.9.9.9
+DNSSEC=no
+```
+
+注意：
+
+- 不直接改 `/etc/resolv.conf`——它是 `systemd-resolved` 的软链接，改了会被覆盖
+- `DNSSEC=no` 必须保留：部分 Steam CDN 域名签名链不完整，开了会解析失败
+
+生效后 `resolvectl status` 显示 4 个上游，解析耗时 `0.77ms`。
+
+### 29.6 验证（真实链路，不是 curl 模拟）
+
+| 验证 | 方式 | 结果 |
+|---|---|---|
+| root 手动自更新 | `timeout 3600 ./steamcmd.sh +quit` | **15 秒内完成**，`Unloading Steam API...OK` |
+| ubuntu 用户自更新 | `runuser -u ubuntu -- timeout 180 ./steamcmd.sh +quit` | **同样秒过**，日志 `Verifying installation...` |
+| 面板触发 | `POST /server-maintenance/update/check` | 12 秒 `status=success`，`installed=23990100`，`latest=23990100`，`update_available=false` |
+| systemd 直触发 | 写 `maintenance-request.json` + `systemctl start l4d2-maintenance` | `Result=success`，`ExecMainStatus=0`，build ID 一致 |
+
+关键发现：**一旦自更新真的跑完一次，后续 `./steamcmd.sh +quit` 是秒退的**（`Verifying installation...` 阶段不需要重新下载）。所以 3600 秒只影响首次，之后每次都很快。
+
+### 29.7 维护请求字段名（踩坑记录）
+
+`maintenance-request.json` 的字段是 `steam_dir` / `install_dir`，**不是** `steam_directory` / `install_directory`：
+
+```json
+{
+  "request_id": "uuid",
+  "action": "check",
+  "steam_dir": "/data",
+  "install_dir": "/data/l4d2-server",
+  "service_name": "l4d2.service"
+}
+```
+
+写错字段会被 `read_request()` 判为「维护请求格式无效」，而且服务仍然 `Result=success`（因为业务失败统一 `exit 0`），容易误判成链路正常。
+
+### 29.8 脚本
+
+| 脚本 | 用途 |
+|---|---|
+| `cc_diag_steamcmd_net.py` | DNS、连通性、日志、结果文件一次收齐 |
+| `cc_diag_ipv6.py` | IPv4/IPv6 解析与路由对比 |
+| `cc_diag_steamcmd_stall.py` | 日志重复行分析、包体积变化、残留进程 |
+| `cc_diag_steamcmd_user.py` | root 与 ubuntu 两用户对照实验 |
+| `cc_run_steamcmd_selftest.py` | 后台跑自更新并分段观察进度 |
+| `cc_deploy_maintenance_script.py` | 上传 + `bash -n` + 备份 + 安装 |
+| `cc_configure_dns.py` | 写 drop-in、重启 resolved、验证解析与下载 |
+| `cc_trigger_update_check.py` | HTTP 触发检查更新并轮询 |
+| `cc_verify_maintenance_flow.py` | systemd 真实链路验证（绕过 HTTP） |
+
+---
+
+## 30. 插件说明补全：21 个 pending 的处理（2026-11-24）
+
+### 30.1 起点
+
+§28 全量刷新后，187 个插件里有 **21 个挂着 `pending: runtime-commands`**，说明里写着「启用插件后再刷新」。
+
+逐个查证后发现，这 21 个根本不是同一类东西，笼统挂 pending 是错的。
+
+### 30.2 四类真实形态（逐个取证）
+
+| 分类 | 数量 | 判定依据 | 为什么不该挂 pending |
+|---|---|---|---|
+| SourceScramble 内存补丁 | 3 | 只有 `configs/sourcescramble/*.txt` + `gamedata/*.txt`，无 smx | 由 `sourcescramble_manager.smx` 启动时读配置改内存，本身不注册命令 |
+| Metamod 扩展 | 1 | `addons/l4dtoolz.vdf` + `.so` + `.dll`，无 smx | Metamod 层级低于 SourceMod，不注册 SourceMod 命令 |
+| 有源码、源码里确实无命令 | 8 | 有 `.smx` + `.sp`，`.sp` 里无 `RegConsoleCmd`/`RegAdminCmd` | 源码是静态事实，没有就是没有 |
+| 无源码、插件未加载 | 5 | 有 `.smx`，无 `.sp`，`sm cmds` 返回 `was not found` | **这一类才该挂 pending** |
+
+关键证据样本：
+
+```
+# SourceScramble 补丁
+$ find 可选-修复类(修复HUD闪屏).../left4dead2
+.../configs/sourcescramble/l4d2_ems_hud_patch.txt
+.../gamedata/l4d2_ems_hud_sig.txt
+
+# Metamod 扩展
+$ find 自选-tick解锁扩展+多人破解扩展.../left4dead2/addons
+l4dtoolz.vdf  l4dtoolz.so  l4dtoolz.dll
+
+# 有源码但无命令
+$ grep -E 'Reg(Console|Admin)Cmd' 自选-尸体直接消失.../l4d_ragdoll_fader.sp
+（无输出）
+```
+
+### 30.3 三个行为修正
+
+#### 修正一：按形态分类，不做命令查询
+
+`classifyPluginKind` 新增四种形态：`sourcemod` / `scramble` / `metamod` / `empty`。只有 `sourcemod` 才会发 `sm cmds`——对补丁和扩展发查询，只会拿到 `not found` 并误挂 pending。
+
+#### 修正二：SourceMod 扩展不冒充 Metamod
+
+第一版把 `addons/**/*.so` 全归为 Metamod，导致带 `BinHooks.ext.so` 的 Neko 插件被写成「这是 Metamod 扩展」。
+
+但 `addons/sourcemod/extensions/*.so` 是 **SourceMod 扩展**，和 smx 一起工作。现在按路径区分：
+
+- `addons/sourcemod/extensions/` → SourceMod 扩展章节
+- 其他位置（`addons/*.so`、`addons/metamod/bin/*.so`）→ Metamod 平台文件章节
+
+顺带把标题从「Metamod 扩展」改成「Metamod 平台文件」，因为完整的 SourceMod 平台包会同时带 `metamod.vdf` 和几十个平台二进制，叫「扩展」不准确。
+
+#### 修正三：源码兜底，补全未加载插件的命令
+
+作者常常把 `.sp` 源码一起打包。源码里的 `RegConsoleCmd` / `RegAdminCmd` 是静态事实，可以据此补全命令表，不必等插件被启用。
+
+解析规则：
+
+```
+RegConsoleCmd("sm_hp", Command_Reset, "生还者过关时自动满血或复活.")
+RegAdminCmd("sm_limit", cmdSetLimit, ADMFLAG_RCON, "设置特感生成数量")
+```
+
+- 命令名取第一个字符串字面量
+- `RegAdminCmd` 取 `ADMFLAG_XXX` 作为权限（`ADMFLAG_RCON` → `rcon`）
+- 帮助文本取最后一个非权限字符串字面量
+- 无帮助文本就留空，不编造
+
+**必须在章节末尾标注来源差异**，否则读者会误以为命令已在服务器生效：
+
+> 命令表来自插件包内的 `.sp` 源码（`RegConsoleCmd` / `RegAdminCmd`），不是运行时注册信息。插件启用并加载成功后，点「刷新说明」可换成运行时数据。
+
+#### 修正四：源码确认无命令时不再挂 pending
+
+这是 `sourceChecked` 参数的意义。三种「没有命令」要分开：
+
+| 情况 | 文案 | pending |
+|---|---|---|
+| 已加载但无命令 | 「该插件已在运行，但没有注册任何控制台命令」 | 无 |
+| 未加载 + 源码确认无命令 | 「插件包内附带的源码中没有 `RegConsoleCmd`…」 | 无 |
+| 未加载 + 无源码 | 「插件当前未加载，SourceMod 查不到…」 | **有** |
+
+第三种才保留 pending，因为「读不到」不等于「没有」。
+
+### 30.4 附带修掉的解析 bug
+
+| bug | 现象 | 修法 |
+|---|---|---|
+| 启动参数被当作者 | `(-tickrate 100 +sv_setmax 31)` 出现在「作者」列表 | 新增 `launchArgPattern`，`^[+-]` / `-tickrate` / `\+sv_` 一律跳过 |
+| 效果说明被当作者 | `(无特效)` 出现在「作者」列表 | `descriptionHintPattern` 补 `无效`/`无特效`/`特效`/`客户端`/`服务端`/`测试`/`汉化`/`整合`/`优化`/`增强`/`修改`/`替换`/`自定义` |
+| 「自选-」前缀不识别 | `自选-tick解锁扩展…` 拿不到「可选插件」提示 | 前缀解析同时认「可选」和「自选」，都归一成 `可选` |
+
+### 30.5 最终结果
+
+| 阶段 | pending 数 | 含命令插件数 |
+|---|---|---|
+| §28 初始 | 21 | 79 |
+| 分类 + 扩展修正 | 17 | 79 |
+| 源码兜底 | 13 | 85 |
+| 源码确认无命令 | **5** | 85 |
+
+剩余 5 个全是「无 `.sp` 源码 + 插件未加载」：
+
+- 自选-Neko多特-NS7(himenekocn)
+- 自选-Neko多特投票(需要原生投票前置)(himenekocn)
+- 自选-友伤与反伤控制(v1.3)(可投票，需要原生投票库前置)(LaoYutang)
+- 自选-肉鸽buff插件(LaoYutang)
+- 自选-肉鸽前置随机章节插件(Yuzumi, LaoYutang)
+
+这 5 个的 pending 是**准确状态**，不是缺陷。启用插件后点「刷新说明」即可补全。
+
+全站分布：
+
+| 项 | 数量 |
+|---|---|
+| README 总数 | 187 |
+| 面板生成 | 187 |
+| 含命令章节 | 183 |
+| 运行时无命令（正常形态） | 85 |
+| SourceScramble 补丁 | 3 |
+| Metamod 纯扩展 | 1 |
+| 源码确认无命令 | 8 |
+| 待补全（未加载无源码） | 5 |
+
+### 30.6 新增测试（共 8 个）
+
+| 测试 | 覆盖点 |
+|---|---|
+| `TestParsePluginNameHintsSkipsLaunchArguments` | `-tickrate 100` 不算作者 |
+| `TestParsePluginNameHintsSkipsUsageNotes` | 「游戏运行时添加无效」不算作者 |
+| `TestParsePluginNameHintsSkipsEffectNotes` | 「无特效」不算作者 |
+| `TestGeneratePluginReadmeForScramblePatch` | 补丁不查 RCON、不挂 pending、有专属章节 |
+| `TestGeneratePluginReadmeForMetamodExtension` | 扩展不查 RCON、不挂 pending、启动参数不进作者 |
+| `TestGeneratePluginReadmeForEmptyPlugin` | 空目录有合理文案 |
+| `TestGeneratePluginReadmeSeparatesSourceModExtensions` | SourceMod 扩展不归 Metamod |
+| `TestParseSourcePluginCommands` | 源码解析五种写法（含无帮助文本） |
+| `TestGeneratePluginReadmeUsesSourceWhenUnloaded` | 未加载时用源码补全并标注来源 |
+| `TestGeneratePluginReadmeConfirmsNoCommandsFromSource` | 源码确认无命令时不挂 pending |
+| `TestGeneratePluginReadmeKeepsPendingWithoutSource` | 无源码时必须保留 pending |
+
+### 30.7 脚本
+
+| 脚本 | 用途 |
+|---|---|
+| `cc_collect_pending_plugins.py` | 采集 21 个 pending 的完整证据（状态/smx/运行时信息） |
+| `cc_probe_enabled_no_smx.py` | 排查「enabled 但无 smx」的矛盾项 |
+| `cc_dump_patch_files.py` | 读取 SourceScramble 配置与 Metamod 扩展内容 |
+| `cc_probe_neko_misclass.py` | 定位 Neko 被误判 Metamod 的原因 |
+| `cc_fix_pending_readmes.py` | 逐个刷新并统计 pending 变化 |
+| `cc_spotcheck_new_readmes.py` | 抽检各类文案 |
+| `cc_check_sp_sources.py` | 统计哪些 pending 插件带 `.sp` 源码 |
+| `cc_count_sp_commands.py` | 统计源码里注册了多少命令 |
+| `cc_probe_cmd_details.py` | 查看完整注册行（权限/说明参数） |
+| `cc_verify_source_commands.py` | 验证源码命令表补全效果 |
+| `cc_final_pending_check.py` | 最终确认剩余 5 个的真实状态 |
+
+
+
 

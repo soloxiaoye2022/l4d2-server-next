@@ -307,6 +307,7 @@ func main() {
 		plugins.POST("/presets", controller.GetPresets)
 		plugins.POST("/apply-preset", controller.ApplyPreset)
 		plugins.POST("/readme", controller.GetPluginReadme)
+		plugins.POST("/readme/refresh", controller.RefreshPluginReadme)
 		plugins.POST("/store/list", controller.GetStorePlugins)
 		plugins.POST("/store/download", controller.DownloadStorePlugin)
 		plugins.POST("/store/download/status", controller.GetStoreDownloadStatus)
