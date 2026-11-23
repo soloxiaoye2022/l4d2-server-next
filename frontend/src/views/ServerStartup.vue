@@ -53,7 +53,15 @@
 
       <template v-else>
         <a-alert
-          v-if="!hasGameDirectory"
+          v-if="wrapperManaged"
+          type="info"
+          show-icon
+          message="启动参数由包装脚本管理"
+          :description="wrapperDescription"
+        />
+
+        <a-alert
+          v-else-if="!hasGameDirectory"
           type="error"
           show-icon
           message="缺少 -game left4dead2"
@@ -645,6 +653,19 @@
       (entry) => entry.definitionId === 'game' && entry.value.trim() === 'left4dead2'
     )
   );
+  // 包装脚本（start_server.sh 等）场景：unit 的 ExecStart 只有脚本路径，
+  // 真实参数在脚本内部，后端从运行进程读出来。此时不应提示"缺少 -game"。
+  const wrapperManaged = computed(() => Boolean(config.value?.exec_start_is_wrapper));
+  const wrapperScript = computed(() => (config.value?.exec_start || '').split(/\s+/)[0] || '包装脚本');
+  const wrapperDescription = computed(() => {
+    if (config.value?.process_command) {
+      return `ExecStart 指向 ${wrapperScript.value}，以下参数是从运行中的 srcds（PID ${config.value.process_pid}）读取的真实值。保存后 unit 会直接调用 srcds，不再经过该脚本。`;
+    }
+    return (
+      config.value?.process_error ||
+      `ExecStart 指向 ${wrapperScript.value}，真实参数在脚本内部。启动游戏服后刷新即可读取当前生效值。`
+    );
+  });
   const duplicateDefinitions = computed(() => {
     const counts = new Map<string, number>();
     for (const entry of entries.value) {
@@ -781,10 +802,25 @@
 
   const applyConfig = (value: ServerStartupConfig) => {
     config.value = value;
-    const parsed = parseStartupCommand(value.exec_start);
-    workingDirectory.value = value.working_directory;
-    executable.value = parsed.executable;
-    entries.value = hydrateStartupComments(parsed.entries, value.startup_comments);
+    // 包装脚本场景解析运行进程命令：unit 里的 ExecStart 只有脚本路径，
+    // 真实参数在脚本内部，必须按运行中的 srcds 还原，否则页面是空的。
+    if (value.exec_start_is_wrapper) {
+      const parsed = value.process_command
+        ? parseStartupCommand(value.process_command)
+        : { executable: '', entries: [] };
+      workingDirectory.value = value.working_directory;
+      executable.value = value.process_executable || parsed.executable;
+      // +map 是 srcds_run 追加的当前地图，不是启动参数，不能写回 unit。
+      entries.value = hydrateStartupComments(
+        parsed.entries.filter((entry) => entry.token.toLowerCase() !== '+map'),
+        value.startup_comments
+      );
+    } else {
+      const parsed = parseStartupCommand(value.exec_start);
+      workingDirectory.value = value.working_directory;
+      executable.value = parsed.executable;
+      entries.value = hydrateStartupComments(parsed.entries, value.startup_comments);
+    }
     savedSnapshot.value = snapshotCurrent();
   };
 
@@ -1082,12 +1118,20 @@
   };
 
   const confirmSave = () => {
+    let content: string;
+    if (wrapperManaged.value) {
+      content =
+        `当前 ExecStart 指向包装脚本 ${wrapperScript.value}。保存后服务会改为直接由 systemd 调用 srcds，` +
+        '脚本里的 tickrate 模板复制、RCON 密码写入等逻辑不再执行。确认继续？';
+    } else if (platform.hasSystemd) {
+      content = '保存后会写入 systemd 服务定义和中文注释，并自动执行 daemon-reload。当前游戏服不会自动重启。';
+    } else {
+      content = '保存后会写入启动脚本和中文注释。当前游戏服不会自动重启，需要重启后生效。';
+    }
     Modal.confirm({
       title: '确认修改服务器启动项？',
       icon: () => h(ExclamationCircleOutlined),
-      content: platform.hasSystemd
-        ? '保存后会写入 systemd 服务定义和中文注释，并自动执行 daemon-reload。当前游戏服不会自动重启。'
-        : '保存后会写入启动脚本和中文注释。当前游戏服不会自动重启，需要重启后生效。',
+      content,
       okText: '保存并重载',
       onOk: save,
     });

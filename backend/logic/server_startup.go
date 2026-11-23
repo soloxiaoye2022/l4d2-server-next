@@ -51,6 +51,16 @@ type ServerStartupConfig struct {
 	ReloadedAt              string   `json:"reloaded_at,omitempty"`
 	RestartCommandAvailable bool     `json:"restart_command_available"`
 	StartupComments         []string `json:"startup_comments"`
+	// ExecStartIsWrapper 表示 unit 的 ExecStart 是包装脚本，
+	// 真实启动参数要从运行中的 srcds 进程读取。
+	ExecStartIsWrapper bool `json:"exec_start_is_wrapper"`
+	// ProcessCommand 是运行中 srcds 的完整命令行，供前端解析真实参数。
+	ProcessCommand string `json:"process_command,omitempty"`
+	ProcessPID     int    `json:"process_pid,omitempty"`
+	// ProcessExecutable 是运行进程的绝对启动路径，包装脚本场景写入 ExecStart 用。
+	ProcessExecutable string `json:"process_executable,omitempty"`
+	// ProcessError 说明为什么取不到运行进程，前端据此给出提示。
+	ProcessError string `json:"process_error,omitempty"`
 }
 
 type UpdateServerStartupRequest struct {
@@ -74,6 +84,14 @@ type startupApplyResult struct {
 	DaemonReload bool   `json:"daemon_reload"`
 }
 
+// serverStartupUnitPath 返回部署的真实启动项路径，用于运行时描述与端口解析。
+//
+// 顺序：
+//  1. 环境变量显式指定（部署时通常指向宿主机真实 unit）
+//  2. Windows 批处理启动器
+//  3. /etc/systemd/system/l4d2.service
+//  4. /host/systemd-units/l4d2.service（容器内只读挂载）
+//  5. 兜底返回 /control/l4d2.service 快照
 func serverStartupUnitPath() string {
 	for _, name := range []string{"L4D2_STARTUP_UNIT_PATH", "L4D2_SERVER_UNIT_FILE"} {
 		if path := strings.TrimSpace(os.Getenv(name)); path != "" {
@@ -86,14 +104,89 @@ func serverStartupUnitPath() string {
 		return filepath.Join(DefaultControlDir(), "l4d2.bat")
 	}
 	for _, path := range []string{
-		"/control/l4d2.service",
 		"/etc/systemd/system/l4d2.service",
+		"/host/systemd-units/l4d2.service",
 	} {
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
-	return "/control/l4d2.service"
+	return serverStartupSnapshotPath()
+}
+
+// serverStartupSnapshotPath 返回面板与宿主机交接用的启动项快照。
+// 宿主机 l4d2-startup.path 监听该文件，校验后安装到 /etc/systemd/system/。
+func serverStartupSnapshotPath() string {
+	if usesBatchStartup() {
+		return filepath.Join(DefaultControlDir(), "l4d2.bat")
+	}
+	return filepath.Join(DefaultControlDir(), "l4d2.service")
+}
+
+// serverStartupReadPath 返回面板读取启动项内容时使用的路径。
+//
+// 容器里部署的真实 unit 是只读挂载，但面板保存后更新的是快照，
+// 因此存在更新的快照时必须以快照为准，否则页面会一直显示旧参数。
+func serverStartupReadPath() string {
+	if usesBatchStartup() {
+		return serverStartupUnitPath()
+	}
+	source := serverStartupUnitPath()
+	snapshot := serverStartupSnapshotPath()
+	if filepath.Clean(source) == filepath.Clean(snapshot) {
+		return source
+	}
+	sourceInfo, sourceErr := os.Stat(source)
+	snapshotInfo, snapshotErr := os.Stat(snapshot)
+	switch {
+	case snapshotErr == nil && sourceErr == nil:
+		// 谁更新读谁：宿主机手工改过 unit 就尊重 unit，否则用面板快照。
+		if !snapshotInfo.ModTime().Before(sourceInfo.ModTime()) {
+			return snapshot
+		}
+		return source
+	case snapshotErr == nil:
+		return snapshot
+	default:
+		return source
+	}
+}
+
+// startupDirWritable 通过真实创建临时文件判断目录是否可写。
+// 容器里的只读挂载目录 Stat 成功但写入必定失败，必须实测。
+func startupDirWritable(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	probe, err := os.CreateTemp(dir, ".l4d2-write-probe-*")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
+	return true
+}
+
+// startupUnitWritablePath 返回保存启动项时应该写入的路径。
+//
+// 优先写回读到的位置；该目录不可写（容器内真实 unit 是只读挂载）时
+// 退回可写的快照目录，由宿主机 path unit 校验并安装。
+func startupUnitWritablePath(readPath string) (string, error) {
+	if usesBatchStartup() {
+		return readPath, nil
+	}
+	if startupDirWritable(filepath.Dir(readPath)) {
+		return readPath, nil
+	}
+	snapshot := serverStartupSnapshotPath()
+	if startupDirWritable(filepath.Dir(snapshot)) {
+		return snapshot, nil
+	}
+	return "", fmt.Errorf(
+		"无法写入启动项：%s 与 %s 都不可写。容器部署请把宿主机目录挂载到 %s（例如 -v /opt/l4d2-manager/control:%s）",
+		filepath.Dir(readPath), filepath.Dir(snapshot), filepath.Dir(snapshot), filepath.Dir(snapshot),
+	)
 }
 
 func serverStartupServiceName() string {
@@ -143,7 +236,7 @@ func GetServerStartupConfig() (ServerStartupConfig, error) {
 		return cfg, fmt.Errorf("systemd 服务名无效")
 	}
 
-	unitPath := serverStartupUnitPath()
+	unitPath := serverStartupReadPath()
 	content, err := os.ReadFile(unitPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -173,7 +266,43 @@ func GetServerStartupConfig() (ServerStartupConfig, error) {
 	if cfg.ReloadStatus == "" {
 		cfg.ReloadStatus = "ready"
 	}
+	applyRunningProcess(&cfg)
 	return cfg, nil
+}
+
+// applyRunningProcess 在 ExecStart 指向包装脚本时，把运行中 srcds 的真实
+// 命令行补进配置，让前端能解析出实际生效的参数而不是"暂无启动参数"。
+func applyRunningProcess(cfg *ServerStartupConfig) {
+	if usesBatchStartup() {
+		return
+	}
+	cfg.ExecStartIsWrapper = isWrapperExecStart(cfg.ExecStart)
+	if !cfg.ExecStartIsWrapper {
+		return
+	}
+	process, ok := FindServiceProcess(cfg.ServiceName)
+	if !ok {
+		cfg.ProcessError = fmt.Sprintf(
+			"启动项由包装脚本 %s 执行，未在 %s 找到运行中的 srcds 进程。启动游戏服后刷新即可读取真实参数。",
+			filepath.Base(splitFirstToken(cfg.ExecStart)), HostProcRoot(),
+		)
+		return
+	}
+	cfg.ProcessCommand = process.Command
+	cfg.ProcessPID = process.PID
+	cfg.ProcessExecutable = process.LaunchExec
+	if port, found, err := parseGameServerPort(process.Command); err == nil && found {
+		cfg.Port = port
+	}
+}
+
+// splitFirstToken 返回命令行的第一个参数（可执行文件路径），供错误提示使用。
+func splitFirstToken(command string) string {
+	tokens, err := splitStartupCommand(command)
+	if err != nil || len(tokens) == 0 {
+		return command
+	}
+	return tokens[0]
 }
 
 func GetServerEndpoint() ServerStartupFileState {
@@ -181,7 +310,7 @@ func GetServerEndpoint() ServerStartupFileState {
 		Port:    DefaultGameServerPort,
 		Service: serverStartupServiceName(),
 	}
-	content, err := os.ReadFile(serverStartupUnitPath())
+	content, err := os.ReadFile(serverStartupReadPath())
 	if err != nil {
 		if envPort := parsePort(os.Getenv("L4D2_PORT")); envPort > 0 {
 			state.Port = envPort
@@ -216,8 +345,8 @@ func UpdateServerStartup(request UpdateServerStartupRequest) (ServerStartupConfi
 		return ServerStartupConfig{}, err
 	}
 
-	unitPath := serverStartupUnitPath()
-	content, err := os.ReadFile(unitPath)
+	readPath := serverStartupReadPath()
+	content, err := os.ReadFile(readPath)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return ServerStartupConfig{}, fmt.Errorf("读取启动项文件失败: %w", err)
@@ -240,7 +369,14 @@ func UpdateServerStartup(request UpdateServerStartupRequest) (ServerStartupConfi
 	if err != nil {
 		return ServerStartupConfig{}, err
 	}
-	if err := writeStartupUnitAtomic(unitPath, []byte(updated)); err != nil {
+
+	// 容器里真实 unit 是只读挂载，这里自动退回可写快照，避免
+	// "open .../l4d2.service: read-only file system" 直接抛给用户。
+	writePath, err := startupUnitWritablePath(readPath)
+	if err != nil {
+		return ServerStartupConfig{}, err
+	}
+	if err := writeStartupUnitAtomic(writePath, []byte(updated)); err != nil {
 		return ServerStartupConfig{}, err
 	}
 

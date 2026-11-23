@@ -3,8 +3,10 @@ package logic
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testSystemdUnit = `[Unit]
@@ -141,5 +143,108 @@ func TestUpdateServerStartupWritesUnitAndReloadTrigger(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "# 服务器端口：27016") {
 		t.Fatalf("updated unit missing startup comment:\n%s", content)
+	}
+}
+
+// 容器部署时真实 unit 是只读挂载，保存必须自动退回可写快照，
+// 而不是把 "read-only file system" 抛给用户。
+func TestUpdateServerStartupFallsBackToWritableSnapshot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 无法用 chmod 模拟只读目录")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root 不受目录权限限制，无法模拟只读挂载")
+	}
+	forceSystemdStartup(t)
+	root := t.TempDir()
+	readOnlyDir := filepath.Join(root, "systemd-units")
+	controlDir := filepath.Join(root, "control")
+	if err := os.MkdirAll(readOnlyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(controlDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	unitPath := filepath.Join(readOnlyDir, "l4d2.service")
+	if err := os.WriteFile(unitPath, []byte(testSystemdUnit), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// 目录置为不可写，模拟容器里的 :ro 挂载
+	if err := os.Chmod(readOnlyDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(readOnlyDir, 0755) })
+
+	t.Setenv("L4D2_STARTUP_UNIT_PATH", unitPath)
+	t.Setenv("L4D2_CONTROL_DIR", controlDir)
+	t.Setenv("L4D2_STARTUP_RESULT_PATH", filepath.Join(controlDir, "result.json"))
+	t.Setenv("L4D2_STARTUP_RELOAD_TRIGGER", filepath.Join(controlDir, "reload"))
+	t.Setenv("L4D2_STARTUP_SERVICE_NAME", "l4d2.service")
+
+	cfg, err := UpdateServerStartup(UpdateServerStartupRequest{
+		WorkingDirectory: "/data/l4d2-server",
+		ExecStart:        "/data/l4d2-server/srcds_run -game left4dead2 -insecure -tickrate 100 +hostport 27015 +exec server.cfg",
+	})
+	if err != nil {
+		t.Fatalf("UpdateServerStartup() error = %v", err)
+	}
+	if cfg.Port != 27015 || !strings.Contains(cfg.ExecStart, "+hostport 27015") {
+		t.Fatalf("返回值应来自快照回读，实际: %+v", cfg)
+	}
+	snapshot := filepath.Join(controlDir, "l4d2.service")
+	written, err := os.ReadFile(snapshot)
+	if err != nil {
+		t.Fatalf("快照未生成: %v", err)
+	}
+	if !strings.Contains(string(written), "/data/l4d2-server/srcds_run") {
+		t.Fatalf("快照内容不正确:\n%s", written)
+	}
+	original, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(original) != testSystemdUnit {
+		t.Fatalf("只读 unit 不应被修改:\n%s", original)
+	}
+}
+
+// 快照比真实 unit 新时必须读快照，否则页面永远显示旧参数。
+func TestServerStartupReadPathPrefersNewerSnapshot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("该用例依赖 Unix 路径语义")
+	}
+	forceSystemdStartup(t)
+	root := t.TempDir()
+	controlDir := filepath.Join(root, "control")
+	if err := os.MkdirAll(controlDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	unitPath := filepath.Join(root, "l4d2.service")
+	if err := os.WriteFile(unitPath, []byte(testSystemdUnit), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(unitPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := filepath.Join(controlDir, "l4d2.service")
+	if err := os.WriteFile(snapshot, []byte(testSystemdUnit), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("L4D2_STARTUP_UNIT_PATH", unitPath)
+	t.Setenv("L4D2_CONTROL_DIR", controlDir)
+
+	if got := serverStartupReadPath(); got != snapshot {
+		t.Fatalf("serverStartupReadPath() = %q, want %q", got, snapshot)
+	}
+
+	// 宿主机手工改 unit 后（更新），应重新以真实 unit 为准
+	newer := time.Now().Add(time.Hour)
+	if err := os.Chtimes(unitPath, newer, newer); err != nil {
+		t.Fatal(err)
+	}
+	if got := serverStartupReadPath(); got != unitPath {
+		t.Fatalf("serverStartupReadPath() = %q, want %q", got, unitPath)
 	}
 }
