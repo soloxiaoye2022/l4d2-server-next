@@ -20,7 +20,11 @@ RUNTIME_SNAPSHOT="${CONTROL_DIR}/runtime-control.json"
 # 慢速网络下要十几分钟。旧代码把 app_info 查询和自更新一起塞进 timeout 180，
 # 结果每次都在 17% 左右被 kill，自更新永远完成不了、"检查更新"永远失败，
 # 而且下次又从 0% 重新下载 —— 形成永久失败循环。
-STEAMCMD_SELF_UPDATE_TIMEOUT="${L4D2_STEAMCMD_SELF_UPDATE_TIMEOUT:-1200}"
+#
+# 首次初始化放宽到 3600 秒：cc雨云 实测 1200 秒只下到 2MB（约 1.7 KB/s），
+# 25MB 的包在这个速率下需要约 4 小时。慢速链路是常态，不能按快速链路设超时。
+# 自更新完成后 ./steamcmd.sh +quit 会秒退，后续调用不会重复等待。
+STEAMCMD_SELF_UPDATE_TIMEOUT="${L4D2_STEAMCMD_SELF_UPDATE_TIMEOUT:-3600}"
 STEAMCMD_QUERY_TIMEOUT="${L4D2_STEAMCMD_QUERY_TIMEOUT:-180}"
 
 # service_control 停止/启动游戏服。
@@ -198,7 +202,10 @@ write_result "$request_id" "$action" "running" "正在执行服务端维护任�
 # 面板只认结果文件。若这里 exit 1，systemd 会把 l4d2-maintenance.service
 # 标成 failed，用户看到一片红却查不到真正原因（例如网络慢导致的 check 失败）。
 if [[ ! -x "${steam_dir}/steamcmd.sh" ]]; then
-  write_result "$request_id" "$action" "error" "SteamCMD 不存在或不可执行" \
+  # 有人用 Steam 客户端下载游戏文件后手工搬运，宿主机上没有 SteamCMD。
+  # 直接说清楚缺什么、装在哪，比只说"不可执行"有用。
+  write_result "$request_id" "$action" "error" \
+    "宿主机没有 SteamCMD（期望路径 ${steam_dir}/steamcmd.sh）。服务端更新需要它；只跑游戏不需要。安装方法：mkdir -p ${steam_dir} && cd ${steam_dir} && curl -sqL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar zxf -" \
     "$installed_build" "" "false" ""
   exit 0
 fi
