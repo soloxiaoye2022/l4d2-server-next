@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { Modal as AModal, Spin as ASpin, Empty as AEmpty } from 'ant-design-vue';
+import { Modal as AModal, Spin as ASpin, Empty as AEmpty, message } from 'ant-design-vue';
+import { ReloadOutlined } from '@ant-design/icons-vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { api } from '../services/api';
@@ -19,6 +20,7 @@ const emit = defineEmits<{
 }>();
 
 const loading = ref(false);
+const refreshing = ref(false);
 const content = ref('');
 const fileName = ref('');
 const error = ref('');
@@ -47,6 +49,38 @@ const fetchReadme = async () => {
     error.value = '此插件无说明文件';
   } finally {
     loading.value = false;
+  }
+};
+
+/**
+ * 重新生成说明。
+ * 插件启用后点击可补全命令与聊天框用法；
+ * 未启用的插件也能生成基础版（配置项、文件清单）。
+ */
+const refreshReadme = async () => {
+  if (!props.pluginName) return;
+  refreshing.value = true;
+  try {
+    const data = await api.refreshPluginReadme(props.pluginName);
+    if (data.content) {
+      content.value = data.content;
+      fileName.value = data.file_name;
+      error.value = '';
+      if (data.has_commands) {
+        message.success(`已补全说明，含 ${data.command_count} 条命令`);
+      } else if (data.written) {
+        message.success('已生成基础说明，启用插件后可补全命令');
+      } else {
+        message.info(data.reason || '说明内容无变化');
+      }
+    } else {
+      error.value = data.reason || '此插件无说明文件';
+      message.warning(error.value);
+    }
+  } catch (e: any) {
+    message.error('刷新说明失败: ' + e.message);
+  } finally {
+    refreshing.value = false;
   }
 };
 
@@ -136,6 +170,13 @@ const handleCancel = () => {
     @cancel="handleCancel"
     :bodyStyle="{ padding: '16px 24px', maxHeight: '75vh', overflowY: 'auto' }"
   >
+    <div v-if="!loading" class="mb-3 flex justify-end">
+      <a-button size="small" :loading="refreshing" @click="refreshReadme">
+        <template #icon><ReloadOutlined /></template>
+        刷新说明
+      </a-button>
+    </div>
+
     <div v-if="loading" class="flex justify-center py-12">
       <a-spin size="large" />
     </div>
@@ -146,6 +187,7 @@ const handleCancel = () => {
           <span class="text-gray-400 dark:text-gray-500">{{ error }}</span>
         </template>
       </a-empty>
+      <p class="mt-2 text-xs text-gray-400">点击「刷新说明」可根据插件文件重新生成</p>
     </div>
 
     <div v-else class="markdown-body" v-html="renderedHtml" />

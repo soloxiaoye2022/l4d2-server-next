@@ -361,6 +361,34 @@ export interface ServerEndpoint {
   service_name: string;
 }
 
+/** 一个实际存在的服务器名配置来源。同一台服务器可能装了多个服务器名插件。 */
+export interface HostnameSource {
+  plugin: string;
+  file: string;
+  raw: string;
+  is_template: boolean;
+  format: string;
+  note: string;
+}
+
+/** 服务器名检测证据：RCON 生效值、已加载插件、配置文件。 */
+export interface HostnameDetection {
+  effective: string;
+  effective_ok: boolean;
+  effective_error: string;
+  plugins: string[];
+  sources: HostnameSource[];
+}
+
+export interface ServerInfoResponse {
+  hostname: string;
+  hostname_error: string;
+  hostname_source: string;
+  detection: HostnameDetection | null;
+  motd: string;
+  host: string;
+}
+
 export interface ServerStartupConfig {
   available: boolean;
   service_name: string;
@@ -373,6 +401,15 @@ export interface ServerStartupConfig {
   reloaded_at?: string;
   restart_command_available: boolean;
   startup_comments: string[];
+  /** ExecStart 指向包装脚本（如 start_server.sh），真实参数要从运行进程读 */
+  exec_start_is_wrapper?: boolean;
+  /** 运行中 srcds 的完整命令行 */
+  process_command?: string;
+  process_pid?: number;
+  /** 运行进程的绝对启动路径，可直接写入 ExecStart */
+  process_executable?: string;
+  /** 取不到运行进程时的说明 */
+  process_error?: string;
 }
 
 export interface ServerStartupUpdate {
@@ -1354,6 +1391,16 @@ class ApiService {
     return response.json();
   }
 
+  /**
+   * 重新生成插件说明。
+   * 插件启用后调用可补全命令章节；也可作为用户手动「刷新说明」入口。
+   */
+  async refreshPluginReadme(name: string) {
+    const response = await this.postJson('/plugins/readme/refresh', { name });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }
+
   async listBackups() {
     const response = await this.post('/plugins/backups/list');
     if (!response.ok) throw new Error(await response.text());
@@ -2117,13 +2164,17 @@ class ApiService {
     return response.text();
   }
 
-  async getServerInfo() {
+  async getServerInfo(): Promise<ServerInfoResponse> {
     const response = await this.post('/server-info/get');
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }
 
-  async updateServerInfo(data: { hostname: string; motd: string; host: string }) {
+  async updateServerInfo(data: { hostname: string; motd: string; host: string }): Promise<{
+    message: string;
+    hostname_file?: string;
+    hostname_notice?: string;
+  }> {
     const response = await this.postJson('/server-info/update', data);
     if (!response.ok) throw new Error(await response.text());
     return response.json();

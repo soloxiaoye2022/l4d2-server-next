@@ -587,3 +587,46 @@ func GetPluginReadme(c *gin.Context) {
 	// No readme found — not an error, just empty
 	c.JSON(http.StatusOK, gin.H{"content": "", "file_name": ""})
 }
+
+// RefreshPluginReadme 重新生成插件说明。
+//
+// 用于两种情况：插件启用后补全命令章节；或用户手动点「刷新说明」。
+func RefreshPluginReadme(c *gin.Context) {
+	role, _ := c.Get("role")
+	if role != "admin" {
+		FailWithError(c, http.StatusForbidden, "需要管理员权限")
+		return
+	}
+
+	var req GetPluginReadmeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		FailWithError(c, http.StatusBadRequest, "参数错误: %v", err)
+		return
+	}
+	if req.Name == "" {
+		FailWithError(c, http.StatusBadRequest, "插件名称不能为空")
+		return
+	}
+	defer LogOp(c, "刷新插件说明: "+req.Name)()
+
+	result, err := logic.EnrichPluginReadme(req.Name)
+	if err != nil {
+		FailWithError(c, http.StatusInternalServerError, "%v", err)
+		return
+	}
+
+	content, fileName, readErr := logic.GetPluginReadme(req.Name)
+	if readErr != nil {
+		content, fileName = "", ""
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"content":       content,
+		"file_name":     fileName,
+		"written":       result.Written,
+		"has_commands":  result.HasCommands,
+		"command_count": result.CommandCount,
+		"convar_count":  result.ConvarCount,
+		"untranslated":  result.Untranslated,
+		"reason":        result.Reason,
+	})
+}

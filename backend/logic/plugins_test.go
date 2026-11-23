@@ -159,6 +159,10 @@ func TestLoadPluginLoadsEnabledSMXWithoutChangingStatus(t *testing.T) {
 		`sm plugins info "alpha.smx"`,
 		`sm plugins load "nested/beta.smx"`,
 		`sm plugins info "nested/beta.smx"`,
+		// 加载成功后补全插件说明会查询运行时命令表。
+		// sm cmds 只接受文件名，嵌套路径会被转成 basename。
+		`sm cmds "alpha.smx"`,
+		`sm cmds "beta.smx"`,
 	}
 	if !reflect.DeepEqual(*fixture.commands, wantCommands) {
 		t.Fatalf("commands = %v, want %v", *fixture.commands, wantCommands)
@@ -223,6 +227,9 @@ func TestReloadPluginReloadsEnabledSMXWithoutChangingStatus(t *testing.T) {
 	wantCommands := []string{
 		`sm plugins reload "alpha.smx"`,
 		`sm plugins reload "nested/beta.smx"`,
+		// 重载后同步刷新说明里的命令章节；sm cmds 只接受文件名。
+		`sm cmds "alpha.smx"`,
+		`sm cmds "beta.smx"`,
 	}
 	if !reflect.DeepEqual(*commands, wantCommands) {
 		t.Fatalf("commands = %v, want %v", *commands, wantCommands)

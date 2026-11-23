@@ -273,6 +273,9 @@ func UploadPlugin(file io.ReaderAt, size int64, filename string) error {
 			rollbackUploadedPlugin(pluginName)
 			return err
 		}
+		// 插件包通常只有 smx、没有 README，这里就地生成一份基础说明。
+		// 生成失败不影响上传结果：插件本身已可用，说明属于附加信息。
+		_, _ = GeneratePluginReadme(pluginName)
 		return nil
 	}
 
@@ -352,6 +355,8 @@ func UploadPlugin(file io.ReaderAt, size int64, filename string) error {
 			rollbackUploadedPlugin(rootDir)
 			return err
 		}
+		// 与单插件分支一致：就地生成基础说明，失败不影响上传结果。
+		_, _ = GeneratePluginReadme(rootDir)
 	}
 
 	return nil
@@ -561,6 +566,9 @@ func loadPluginRuntimeBatch(name string, filenames []string, deploy bool) error 
 		}
 		return loadErr
 	}
+	// 插件此时已在运行，可以读到它注册的命令，补全说明里的命令章节。
+	// 生成失败不影响启用结果：命令只是说明的附加信息。
+	_, _ = EnrichPluginReadme(name)
 	return nil
 }
 
@@ -592,6 +600,8 @@ func ReloadPlugin(name string) error {
 		}
 	}
 
+	// 重载后命令表可能变化，同步刷新说明里的命令章节。
+	_, _ = EnrichPluginReadme(name)
 	return nil
 }
 
