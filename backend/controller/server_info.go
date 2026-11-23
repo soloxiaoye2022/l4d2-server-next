@@ -1,21 +1,23 @@
 package controller
 
 import (
-	"l4d2-manager-next/consts"
 	"net/http"
 	"os"
 	"path/filepath"
-	"unicode/utf8"
 
-	"github.com/axgle/mahonia"
+	"l4d2-manager-next/consts"
+	"l4d2-manager-next/logic"
+
 	"github.com/gin-gonic/gin"
 )
 
 type ServerInfoResponse struct {
-	Hostname      string `json:"hostname"`
-	HostnameError string `json:"hostname_error"`
-	Motd          string `json:"motd"`
-	Host          string `json:"host"`
+	Hostname       string                   `json:"hostname"`
+	HostnameError  string                   `json:"hostname_error"`
+	HostnameSource string                   `json:"hostname_source"`
+	Detection      *logic.HostnameDetection `json:"detection"`
+	Motd           string                   `json:"motd"`
+	Host           string                   `json:"host"`
 }
 
 type UpdateServerInfoRequest struct {
@@ -29,48 +31,31 @@ func readFileContent(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
-	// Detect encoding
-	if utf8.Valid(content) {
-		return string(content), nil
-	}
-
-	// Try GBK
-	decoder := mahonia.NewDecoder("gbk")
-	return decoder.ConvertString(string(content)), nil
+	return logic.DecodeTextContent(content), nil
 }
 
 func writeFileContent(path string, content string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
+// GetServerInfo 汇总服务器信息。
+//
+// 服务器名不再只认 l4d2_hostname.txt：同一台服务器可能装 Neko ServerName、
+// L4D2 中文服务器名等不同插件，各自存在不同位置。这里用 RCON 拿运行时真实
+// 生效值，再用配置文件做补充证据，避免出现"插件明明在跑却提示未启用"。
 func GetServerInfo(c *gin.Context) {
-	hostnamePath := filepath.Join(consts.GamePath, "addons", "sourcemod", "configs", "l4d2_hostname.txt")
 	motdPath := filepath.Join(consts.GamePath, "motd.txt")
 	hostPath := filepath.Join(consts.GamePath, "host.txt")
 
 	resp := ServerInfoResponse{}
 
-	// Hostname
-	if _, err := os.Stat(hostnamePath); os.IsNotExist(err) {
-		resp.HostnameError = "请先在插件管理中启用服务器中文名插件"
-	} else {
-		content, err := readFileContent(hostnamePath)
-		if err != nil {
-			resp.HostnameError = "读取文件失败: " + err.Error()
-		} else {
-			resp.Hostname = content
-		}
-	}
+	detection := logic.DetectHostnameSources()
+	resp.Detection = detection
+	resp.Hostname, resp.HostnameSource, resp.HostnameError = logic.ResolveHostname(detection)
 
-	// Motd
 	if content, err := readFileContent(motdPath); err == nil {
 		resp.Motd = content
-	} else {
-		// If file doesn't exist or error, just return empty, maybe create it later on save
 	}
-
-	// Host
 	if content, err := readFileContent(hostPath); err == nil {
 		resp.Host = content
 	}
@@ -92,28 +77,28 @@ func UpdateServerInfo(c *gin.Context) {
 	}
 	defer LogOp(c, "更新服务器信息")()
 
-	hostnamePath := filepath.Join(consts.GamePath, "addons", "sourcemod", "configs", "l4d2_hostname.txt")
+	// 服务器名按已检测到的配置文件优先级写入，兼容多种插件。
+	written, warning, err := logic.SaveServerHostname(req.Hostname)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存服务器名失败: " + err.Error()})
+		return
+	}
+
 	motdPath := filepath.Join(consts.GamePath, "motd.txt")
 	hostPath := filepath.Join(consts.GamePath, "host.txt")
 
-	// Update Hostname if file exists
-	if _, err := os.Stat(hostnamePath); err == nil {
-		if err := writeFileContent(hostnamePath, req.Hostname); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存服务器名失败: " + err.Error()})
-			return
-		}
-	}
-
-	// For Motd and Host, we create them if they don't exist
 	if err := writeFileContent(motdPath, req.Motd); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存公告失败: " + err.Error()})
 		return
 	}
-
 	if err := writeFileContent(hostPath, req.Host); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存标题失败: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
+	c.JSON(http.StatusOK, gin.H{
+		"message":         "保存成功",
+		"hostname_file":   written,
+		"hostname_notice": warning,
+	})
 }
