@@ -101,7 +101,6 @@ func main() {
 			}
 		}
 	}
-
 	cleanupContext, stopMapCleanup := context.WithCancel(context.Background())
 	defer stopMapCleanup()
 	logic.StartMapCleanup(cleanupContext)

@@ -427,6 +427,7 @@
             <MapAutoCleanupSetting :active="isAdmin" />
 
             <div class="space-y-4">
+              <MapAutoCleanupSetting :active="isAdmin" />
               <section class="setting-section">
                 <div class="setting-row">
                   <div class="min-w-0">
